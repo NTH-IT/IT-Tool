@@ -22,8 +22,8 @@ if %errorlevel% neq 0 (
 :: ---- 2. Xac thuc mat khau (so sanh SHA-256 hash) ----
 :: TODO: thay CORRECT_HASH bang hash SHA-256 thuc te cua mat khau anh chon.
 :: Tao hash bang PowerShell:
-::   (Get-FileHash -InputStream ([IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes('MAT_KHAU_CUA_BAN'))) -Algorithm SHA256).Hash
-set "CORRECT_HASH=REPLACE_WITH_YOUR_SHA256_HASH"
+::   (Get-FileHash -InputStream ([IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes('1235'))) -Algorithm SHA256).Hash
+set "CORRECT_HASH=499BC7DF9D8873C1C38E6898177C343B2A34D2EB43178A9EB4EFCB993366C8CD"
 set "MAX_TRY=3"
 set "TRY=0"
 
@@ -47,8 +47,7 @@ goto ASK_PASSWORD
 echo Xac thuc thanh cong.
 
 :: ---- 3. Tai ToolkitCore.ps1 ve %TEMP% ----
-:: TODO: thay bang URL host thuc te cua ban (vd https://haiit.theworkpc.com/tools/ToolkitCore.ps1)
-set "PS_URL=https://haiit.theworkpc.com/tools/ToolkitCore.ps1"
+set "PS_URL=https://raw.githubusercontent.com/NTH-IT/IT-Tool/main/ToolkitCore.ps1"
 set "PS_PATH=%temp%\ToolkitCore_%RANDOM%.ps1"
 
 echo Dang tai script chinh...

@@ -240,8 +240,7 @@ function Run-PrinterFixTool {
     Clear-Host
     Write-Host "=== TAI VA CHAY PrinterFixTool.exe (Admin) ===" -ForegroundColor Cyan
 
-    # TODO: thay bang URL host thuc te (vd https://haiit.theworkpc.com/tools/PrinterFixTool.exe)
-    $toolUrl  = "https://haiit.theworkpc.com/tools/PrinterFixTool.exe"
+    $toolUrl  = "https://raw.githubusercontent.com/NTH-IT/IT-Tool/main/PrinterFixTool.exe"
     $toolPath = "$env:TEMP\PrinterFixTool_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
 
     try {
