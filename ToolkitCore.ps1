@@ -495,18 +495,31 @@ function Menu-PowerManagement {
         "4"=@{Label="Lid Close Action / Hanh dong gap man hinh";Action={Start-Process powercfg.cpl}}
         "5"=@{Label="Power Button Action / Hanh dong nut nguon";Action={Start-Process powercfg.cpl}}
         "6"=@{Label="Battery Report / Bao cao pin";Action={Run-Task "Battery Report" {
-            $out="$env:USERPROFILE\Desktop\battery-report.html"
-            powercfg /batteryreport /output "$out" | Out-Null
+            $out = "$env:USERPROFILE\Desktop\battery-report.html"
+            if (Test-Path $out) { Remove-Item $out -Force -EA SilentlyContinue }
+            $r = & powercfg /batteryreport /output $out 2>&1
             Start-Sleep 1
-            if(Test-Path $out){Write-Host "Da xuat: $out" -ForegroundColor Green; Start-Process $out}
-            else{Write-Host "Khong xuat duoc (co the may khong co pin)." -ForegroundColor Yellow}
+            if (Test-Path $out) {
+                Write-Host "Da xuat: $out" -ForegroundColor Green
+                Start-Process $out
+            } else {
+                Write-Host "Khong xuat duoc. May co the la PC ban (khong co pin)." -ForegroundColor Yellow
+                Write-Host "Chi tiet: $r" -ForegroundColor Gray
+            }
         }}}
         "7"=@{Label="Power Efficiency Report / Bao cao hieu qua nguon";Action={Run-Task "Power Efficiency Report" {
-            $out="$env:USERPROFILE\Desktop\energy-report.html"
-            powercfg /energy /output "$out" 2>$null | Out-Null
+            $out = "$env:USERPROFILE\Desktop\energy-report.html"
+            if (Test-Path $out) { Remove-Item $out -Force -EA SilentlyContinue }
+            Write-Host "Dang phan tich (60 giay)..." -ForegroundColor Yellow
+            $r = & powercfg /energy /output $out /duration 20 2>&1
             Start-Sleep 2
-            if(Test-Path $out){Write-Host "Da xuat: $out" -ForegroundColor Green; Start-Process $out}
-            else{Write-Host "Khong xuat duoc." -ForegroundColor Yellow}
+            if (Test-Path $out) {
+                Write-Host "Da xuat: $out" -ForegroundColor Green
+                Start-Process $out
+            } else {
+                Write-Host "Khong xuat duoc." -ForegroundColor Yellow
+                Write-Host "Chi tiet: $r" -ForegroundColor Gray
+            }
         }}}
     })
 }
@@ -557,10 +570,18 @@ function Run-UC20 {
 function Menu-WindowsUpdate {
     Show-Menu -Title "Windows Update / Cap nhat Windows" -Options ([ordered]@{
         "1"=@{Label="Check Update / Kiem tra cap nhat";Action={Run-Task "Check Update" {
-            Write-Host "Dang gui lenh quet cap nhat..."
-            UsoClient StartScan
-            Start-Sleep 2
-            Write-Host "Da gui lenh. Mo Windows Update de xem ket qua..." -ForegroundColor Green
+            $svc = Get-Service wuauserv -EA SilentlyContinue
+            Write-Host "Trang thai dich vu Windows Update: $($svc.Status)"
+            if ($svc.Status -ne 'Running') {
+                Write-Host "Dang khoi dong dich vu..." -ForegroundColor Yellow
+                Start-Service wuauserv -EA SilentlyContinue
+                Start-Sleep 2
+            }
+            Write-Host "Dang gui lenh quet cap nhat (UsoClient + wuauclt)..." -ForegroundColor Yellow
+            & UsoClient.exe StartScan 2>&1 | Out-Null
+            & wuauclt.exe /detectnow 2>&1 | Out-Null
+            Write-Host "Da gui lenh quet thanh cong." -ForegroundColor Green
+            Write-Host "Ket qua se hien tai: Cai dat -> Windows Update." -ForegroundColor Cyan
             Start-Process ms-settings:windowsupdate
         }}}
         "2"=@{Label="Open Windows Update / Mo cap nhat Windows";Action={Start-Process ms-settings:windowsupdate}}
