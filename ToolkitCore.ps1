@@ -39,42 +39,18 @@ function Read-Esc {
 }
 
 function Read-IPEsc {
-    param([string]$Label="IP")
-    Write-Host -NoNewline "${Label}: "
-    $octets = @("","","",""); $idx = 0
+    param([string]$Label = "IP")
     while ($true) {
-        $k = [Console]::ReadKey($true)
-        if ($k.Key -eq 'Escape') { Write-Host ""; return $Global:ESC }
-        if ($k.Key -eq 'Enter') {
-            if ($idx -eq 3 -and $octets[3] -ne "") { Write-Host ""; break }
-            continue
+        $v = Read-Esc "${Label} (vd: 192.168.1.1): "
+        if ($v -eq $Global:ESC) { return $Global:ESC }
+        $v = $v.Trim()
+        if ($v -match '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$') {
+            $parts = $v -split '\\.'
+            $invalid = $parts | Where-Object { [int]$_ -gt 255 }
+            if (-not $invalid) { return $v }
         }
-        if ($k.Key -eq 'Backspace') {
-            if ($octets[$idx].Length -gt 0) {
-                $octets[$idx]=$octets[$idx].Substring(0,$octets[$idx].Length-1)
-                Write-Host -NoNewline ([char]8+" "+[char]8)
-            } elseif ($idx -gt 0) {
-                $idx--
-                Write-Host -NoNewline ([char]8+" "+[char]8)
-                if ($octets[$idx].Length -gt 0) {
-                    $octets[$idx]=$octets[$idx].Substring(0,$octets[$idx].Length-1)
-                    Write-Host -NoNewline ([char]8+" "+[char]8)
-                }
-            }
-            continue
-        }
-        if ($k.KeyChar -eq '.' -and $idx -lt 3 -and $octets[$idx] -ne "") {
-            $idx++; Write-Host -NoNewline "."; continue
-        }
-        if ($k.KeyChar -match '^[0-9]$' -and $octets[$idx].Length -lt 3) {
-            $cand = $octets[$idx]+$k.KeyChar
-            if ([int]$cand -le 255) {
-                $octets[$idx]=$cand; Write-Host -NoNewline $k.KeyChar
-                if ($octets[$idx].Length -eq 3 -and $idx -lt 3) { $idx++; Write-Host -NoNewline "." }
-            }
-        }
+        Write-Host "IP khong hop le. Vi du: 192.168.1.1 (moi phan 0-255). Nhap lai." -ForegroundColor Red
     }
-    return ($octets -join ".")
 }
 
 function Confirm-Action {
@@ -86,25 +62,37 @@ function Confirm-Action {
 function Pause-Return { Write-Host ""; Read-Host "Nhan Enter de quay lai" | Out-Null }
 
 function Download-WithProgress {
-    param([string]$Url,[string]$Dest,[string]$Name)
+    param([string]$Url, [string]$Dest, [string]$Name)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        $req = [System.Net.HttpWebRequest]::Create($Url)
-        $req.Method = "GET"; $resp = $req.GetResponse()
-        $total = $resp.ContentLength
-        $stream = $resp.GetResponseStream()
-        $fs = [System.IO.File]::Create($Dest)
-        $buf = New-Object byte[] 65536
-        $read = 0; $bytes = 0
-        while (($read = $stream.Read($buf,0,$buf.Length)) -gt 0) {
-            $fs.Write($buf,0,$read); $bytes+=$read
-            $pct = if ($total -gt 0) { [math]::Round($bytes*100/$total) } else { 0 }
-            Write-Host -NoNewline "`rDang tai $Name`: $pct% - $([math]::Round($sw.Elapsed.TotalSeconds,1))s  "
+        $job = Start-Job -ScriptBlock {
+            param($u, $d)
+            $wc = New-Object System.Net.WebClient
+            $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            $wc.DownloadFile($u, $d)
+        } -ArgumentList $Url, $Dest
+
+        $spin = @('|', '/', '-', '\'); $si = 0
+        while ($job.State -eq 'Running') {
+            $sz = if (Test-Path $Dest) { [math]::Round((Get-Item $Dest).Length / 1MB, 1) } else { 0 }
+            Write-Host -NoNewline "`rDang tai $Name`: $($spin[$si % 4]) $sz MB - $([math]::Round($sw.Elapsed.TotalSeconds, 1))s  "
+            $si++; Start-Sleep -Milliseconds 300
         }
-        $fs.Close(); $stream.Close(); $resp.Close(); Write-Host ""; return $true
+        Write-Host ""
+        $err = Receive-Job $job -ErrorAction SilentlyContinue
+        Remove-Job $job -Force -ErrorAction SilentlyContinue
+        $sw.Stop()
+
+        if ((Test-Path $Dest) -and (Get-Item $Dest).Length -gt 100000) {
+            $sz = [math]::Round((Get-Item $Dest).Length / 1MB, 1)
+            Write-Host "Da tai xong: $sz MB / $([math]::Round($sw.Elapsed.TotalSeconds, 1))s" -ForegroundColor Green
+            return $true
+        }
+        Write-Host "Loi: file tai ve khong hop le (co the link het han hoac bi redirect)." -ForegroundColor Red
+        return $false
     } catch {
-        try { if ($fs) {$fs.Close()} } catch {}
-        Write-Host "`nLoi tai: $_" -ForegroundColor Red; return $false
+        if (Get-Job -ErrorAction SilentlyContinue) { Get-Job | Remove-Job -Force -ErrorAction SilentlyContinue }
+        Write-Host "Loi: $_" -ForegroundColor Red; return $false
     }
 }
 
@@ -238,7 +226,7 @@ function Menu-Network {
 function Add-CheckRow { param($L,[string]$N,[bool]$P,[string]$D=""); $L.Add([PSCustomObject]@{Hang_muc=$N;Ket_qua=$(if($P){"[OK]"}else{"[LOI]"});Chi_tiet=$D}) }
 
 function Test-FileSharingLan {
-    Clear-Host; Write-Host "=== BANG TOM TAT CHIA SE FILE QUA LAN ===" -ForegroundColor Cyan
+    Clear-Host; Write-Host "=== CHAN DOAN CAI DAT CHIA SE FILE QUA LAN ===" -ForegroundColor Cyan
     $r = New-Object System.Collections.ArrayList
     $s = Get-Service LanmanServer; Add-CheckRow $r "Service Server" ($s.Status -eq 'Running') $s.Status
     $w = Get-Service LanmanWorkstation; Add-CheckRow $r "Service Workstation" ($w.Status -eq 'Running') $w.Status
@@ -252,7 +240,7 @@ function Test-FileSharingLan {
 }
 
 function Test-PrinterPipeline {
-    Clear-Host; Write-Host "=== BANG TOM TAT CHAN DOAN MAY IN ===" -ForegroundColor Cyan
+    Clear-Host; Write-Host "=== CHAN DOAN CAI DAT MAY IN ===" -ForegroundColor Cyan
     $r = New-Object System.Collections.ArrayList
     $s = Get-Service LanmanServer; Add-CheckRow $r "Server (LanmanServer)" ($s.Status -eq 'Running') $s.Status
     $rpc = Get-Service RpcSs; Add-CheckRow $r "RPC (RpcSs)" ($rpc.Status -eq 'Running') $rpc.Status
@@ -288,8 +276,8 @@ function Run-PrinterFixTool {
 
 function Menu-PrinterSharing {
     Show-Menu -Title "2. PRINTER & FILE SHARING" -Options ([ordered]@{
-        "1"=@{Label="Bang tom tat chia se file qua LAN";Action={Test-FileSharingLan}}
-        "2"=@{Label="Bang tom tat chan doan may in";Action={Test-PrinterPipeline}}
+        "1"=@{Label="Chan doan cai dat chia se file qua LAN";Action={Test-FileSharingLan}}
+        "2"=@{Label="Chan doan cai dat may in";Action={Test-PrinterPipeline}}
         "3"=@{Label="Chay PrinterFixTool.exe";Action={Run-PrinterFixTool}}
     })
 }
