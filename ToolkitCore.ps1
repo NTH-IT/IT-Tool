@@ -69,18 +69,23 @@ function Get-PrefixLength {
 }
 
 function Select-NetIdx {
-    Get-NetAdapter | Where-Object Status -eq 'Up' | Format-Table InterfaceIndex, Name, InterfaceDescription -AutoSize
+    $adapters = Get-NetAdapter | Where-Object Status -eq 'Up'
+    $adapters | Format-Table InterfaceIndex, Name, InterfaceDescription -AutoSize | Out-Host
     while ($true) {
-        $idx = Read-Esc "Nhap InterfaceIndex: "
-        if ($idx -eq $Global:ESC) { return $null }
-        $ad = Get-NetAdapter | Where-Object { $_.InterfaceIndex -eq ([int]$idx -as [int]) -and $_.Status -eq 'Up' }
+        $idxStr = Read-Esc "Nhap InterfaceIndex: "
+        if ($idxStr -eq $Global:ESC) { return $null }
+        [int]$idxNum = 0
+        if (-not [int]::TryParse($idxStr.Trim(), [ref]$idxNum)) {
+            Write-Host "Vui long nhap so nguyen." -ForegroundColor Red; continue
+        }
+        $ad = $adapters | Where-Object InterfaceIndex -eq $idxNum
         if ($ad) {
-            Write-Host ">> [$idx] $($ad.Name) - $($ad.InterfaceDescription)" -ForegroundColor Yellow
-            $c = Read-Esc "Tiep tuc voi card nay? [Y/N]: "
-            if ($c -eq $Global:ESC) { return $null }
-            if ($c.ToUpper() -eq "Y") { return [int]$idx }
+            Write-Host ">> [$idxNum] $($ad.Name) - $($ad.InterfaceDescription)" -ForegroundColor Yellow
+            $cv = Read-Esc "Tiep tuc voi card nay? [Y/N]: "
+            if ($cv -eq $Global:ESC) { return $null }
+            if ($cv.ToUpper() -eq "Y") { return $idxNum }
         } else {
-            Write-Host "Khong tim thay InterfaceIndex '$idx'. Nhap lai." -ForegroundColor Red
+            Write-Host "Khong tim thay InterfaceIndex $idxNum. Nhap lai." -ForegroundColor Red
         }
     }
 }
@@ -91,7 +96,12 @@ function Confirm-Action {
     $r = Read-Esc "Xac nhan? [Y/N] (ESC de huy): "
     return ($r.ToUpper() -eq "Y")
 }
-function Pause-Return { Write-Host ""; Read-Host "Nhan Enter de quay lai" | Out-Null }
+function Pause-Return {
+    Write-Host ""
+    Write-Host -NoNewline "Nhan Enter de quay lai"
+    while ([Console]::ReadKey($true).Key -ne [ConsoleKey]::Enter) {}
+    Write-Host ""
+}
 
 function Download-WithProgress {
     param([string]$Url,[string]$Dest,[string]$Name)
@@ -615,22 +625,24 @@ function Menu-PowerManagement {
             Write-Host "Se tao file battery-report.html tren Desktop."
             $c = Read-Esc "Tao bao cao? [Y/N]: "
             if ($c.ToUpper() -ne "Y") { return }
-            $out = "$env:USERPROFILE\Desktop\battery-report.html"
+            $out = [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'battery-report.html')
             if (Test-Path $out) { Remove-Item $out -Force -EA SilentlyContinue }
             Write-Host "Dang tao bao cao pin..." -ForegroundColor Yellow
-            $r = & powercfg /batteryreport /output $out 2>&1
-            Start-Sleep 1
+            cmd /c "powercfg /batteryreport /output `"$out`"" 2>&1 | Out-Null
+            Start-Sleep 2
             if (Test-Path $out) { Write-Host "Da xuat: $out" -ForegroundColor Green; Start-Process $out }
-            else { Write-Host "Khong xuat duoc (may co the la PC ban/khong co pin)." -ForegroundColor Yellow; Write-Host "Chi tiet: $r" -ForegroundColor Gray }
+            else { Write-Host "Khong xuat duoc. May co the la PC ban (khong co pin)." -ForegroundColor Yellow }
         }}}
         "7"=@{Label="Power Efficiency Report / Bao cao hieu qua nguon";Action={Run-Task "Power Efficiency Report" {
-            Write-Host "Se tao file energy-report.html tren Desktop (mat ~25 giay)."
+            Write-Host "Se tao file energy-report.html tren Desktop (~25 giay)."
             $c = Read-Esc "Tao bao cao? [Y/N]: "
             if ($c.ToUpper() -ne "Y") { return }
-            $out = "$env:USERPROFILE\Desktop\energy-report.html"
+            $out = [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'energy-report.html')
             if (Test-Path $out) { Remove-Item $out -Force -EA SilentlyContinue }
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            $job = Start-Job -ScriptBlock { param($o) & powercfg /energy /output $o /duration 20 2>&1 } -ArgumentList $out
+            $job = Start-Job -ScriptBlock {
+                param($o) cmd /c "powercfg /energy /output `"$o`" /duration 20" 2>&1
+            } -ArgumentList $out
             while ($job.State -eq 'Running') {
                 $pct = [math]::Min(99, [math]::Round($sw.Elapsed.TotalSeconds / 25 * 100))
                 Write-Host -NoNewline "`r  Dang phan tich: $pct% - $([math]::Round($sw.Elapsed.TotalSeconds,0))s  "
@@ -805,6 +817,20 @@ function Open-Site {
     Pause-Return
 }
 
+
+function Run-FontViet {
+    Clear-Host; Write-Host "=== CAI DAT FONT CHU TIENG VIET (1398.exe) ===" -ForegroundColor Cyan
+    $url = "https://www.dropbox.com/scl/fi/nhg1tmopwvtumeukloelt/1398.exe?rlkey=lesaybeoat6h0rv6rvzzj8oif&st=k6qfnmd0&dl=1"
+    $path = "$env:TEMP\1398_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
+    $ok = Download-WithProgress -Url $url -Dest $path -Name "1398.exe"
+    if ($ok -and (Test-Path $path)) {
+        Write-Host "Dang chay 1398.exe (quyen admin)..." -ForegroundColor Yellow
+        Start-Process -FilePath $path -Verb RunAs -Wait
+        Write-Log "Da chay 1398.exe (font tieng Viet)"
+        Remove-Item $path -Force -EA SilentlyContinue
+    }
+    Pause-Return
+}
 function Menu-OtherSoftware {
     Show-Menu -Title "PHAN MEM KHAC / OTHER SOFTWARE" -Options ([ordered]@{
         "1"=@{Label="Office AIO 2016-2024  [chua co link - tu nhap]";Action={Open-Site "Office AIO 2016-2024" "" $true}}
@@ -835,24 +861,25 @@ function Menu-Software {
         Write-Host "10. LibreOffice"
         Write-Host "11. Foxit PDF Reader"
         Write-Host "12. PDFgear (Edit PDF)"
+        Write-Host "13. Font chu tieng Viet (1398.exe)"
         Write-Host ""
         Write-Host "-- MEDIA & TRUYEN THONG --" -ForegroundColor Yellow
-        Write-Host "13. VLC"
-        Write-Host "14. CapCut"
-        Write-Host "15. OBS Studio"
+        Write-Host "14. VLC"
+        Write-Host "15. CapCut"
+        Write-Host "16. OBS Studio"
         Write-Host ""
         Write-Host "-- CONG CU HE THONG / SYSTEM TOOLS --" -ForegroundColor Yellow
-        Write-Host "16. WinRAR"
-        Write-Host "17. ImageGlass"
-        Write-Host "18. AnyDesk"
-        Write-Host "19. UltraViewer"
-        Write-Host "20. Unikey"
-        Write-Host "21. Man hinh cho Fliqlo"
-        Write-Host "22. Bing Wallpaper"
-        Write-Host "23. Crystal Disk Info"
-        Write-Host "24. Recoverit"
-        Write-Host "25. MiniTool Partition Wizard"
-        Write-Host "26. Double Driver"
+        Write-Host "17. WinRAR"
+        Write-Host "18. ImageGlass"
+        Write-Host "19. AnyDesk"
+        Write-Host "20. UltraViewer"
+        Write-Host "21. Unikey"
+        Write-Host "22. Man hinh cho Fliqlo"
+        Write-Host "23. Bing Wallpaper"
+        Write-Host "24. Crystal Disk Info"
+        Write-Host "25. Recoverit"
+        Write-Host "26. MiniTool Partition Wizard"
+        Write-Host "27. Double Driver"
         Write-Host ""
         Write-Host "-- PHAN MEM KHAC / OTHER --" -ForegroundColor Yellow
         Write-Host "99. Office AIO / AutoCAD / WinToHDD..."
@@ -873,20 +900,21 @@ function Menu-Software {
             "10" { Open-Site "LibreOffice"              "https://www.libreoffice.org/download/download/" }
             "11" { Open-Site "Foxit PDF Reader"         "https://www.foxit.com/pdf-reader/" }
             "12" { Open-Site "PDFgear"                  "https://pdfgear.com/pdfgear-for-windows/" }
-            "13" { Open-Site "VLC"                      "https://www.videolan.org/vlc/download-windows.html" }
-            "14" { Open-Site "CapCut"                   "https://www.capcut.com/tools/pc-video-editor" }
-            "15" { Open-Site "OBS Studio"               "https://obsproject.com/download" }
-            "16" { Open-Site "WinRAR"                   "https://www.rarlab.com/download.htm" }
-            "17" { Open-Site "ImageGlass"               "https://imageglass.org/" }
-            "18" { Open-Site "AnyDesk"                  "https://anydesk.com/en/downloads/windows" }
-            "19" { Open-Site "UltraViewer"              "https://www.ultraviewer.net/en/download.html" }
-            "20" { Open-Site "Unikey"                   "https://www.unikey.org/download.html" }
-            "21" { Open-Site "Fliqlo Screensaver"       "https://fliqlo.com/screensaver/" }
-            "22" { Open-Site "Bing Wallpaper"           "https://www.microsoft.com/en-us/bing/bing-wallpaper" }
-            "23" { Open-Site "Crystal Disk Info"        "https://crystalmark.info/en/download/" }
-            "24" { Open-Site "Recoverit"                "https://recoverit.wondershare.com/" }
-            "25" { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" }
-            "26" { Open-Site "Double Driver"            "https://download.com.vn/double-driver-25157" }
+            "13" { Run-FontViet }
+            "14" { Open-Site "VLC"                      "https://www.videolan.org/vlc/download-windows.html" }
+            "15" { Open-Site "CapCut"                   "https://www.capcut.com/tools/pc-video-editor" }
+            "16" { Open-Site "OBS Studio"               "https://obsproject.com/download" }
+            "17" { Open-Site "WinRAR"                   "https://www.rarlab.com/download.htm" }
+            "18" { Open-Site "ImageGlass"               "https://imageglass.org/" }
+            "19" { Open-Site "AnyDesk"                  "https://anydesk.com/en/downloads/windows" }
+            "20" { Open-Site "UltraViewer"              "https://www.ultraviewer.net/en/download.html" }
+            "21" { Open-Site "Unikey"                   "https://www.unikey.org/download.html" }
+            "22" { Open-Site "Fliqlo Screensaver"       "https://fliqlo.com/screensaver/" }
+            "23" { Open-Site "Bing Wallpaper"           "https://www.microsoft.com/en-us/bing/bing-wallpaper" }
+            "24" { Open-Site "Crystal Disk Info"        "https://crystalmark.info/en/download/" }
+            "25" { Open-Site "Recoverit"                "https://recoverit.wondershare.com/" }
+            "26" { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" }
+            "27" { Open-Site "Double Driver"            "https://download.com.vn/double-driver-25157" }
             "99" { Menu-OtherSoftware }
         }
     } while ($true)
@@ -919,8 +947,34 @@ function Show-MainMenu {
                 $confirm = Read-Host "Ban co chac muon thoat? [Y/N]"
                 if ($confirm.ToUpper() -eq "Y") {
                     Write-Log "Nguoi dung thoat toolkit"
+                    Write-Host ""
                     Write-Host "Cam on da su dung." -ForegroundColor Cyan
-                    Start-Sleep 1; exit
+                    Write-Host ""
+                    Write-Host "Dang don dep file tam..." -ForegroundColor Gray
+                    $SID = $env:TOOLKIT_SESSION_ID
+                    $patterns = @(
+                        "$env:TEMP\ToolkitCore_$SID.ps1",
+                        "$env:TEMP\PrinterFixTool_*.exe",
+                        "$env:TEMP\UC20_*.exe",
+                        "$env:TEMP\CanchinhOffice_*.exe",
+                        "$env:TEMP\HardwareTest_*.exe",
+                        "$env:TEMP\1398_*.exe"
+                    )
+                    $deleted = @()
+                    foreach ($pat in $patterns) {
+                        Get-Item $pat -EA SilentlyContinue | ForEach-Object {
+                            $deleted += $_.Name
+                            Remove-Item $_.FullName -Force -EA SilentlyContinue
+                        }
+                    }
+                    if ($deleted.Count -gt 0) {
+                        Write-Host "Da xoa $($deleted.Count) file:" -ForegroundColor Green
+                        $deleted | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
+                    } else {
+                        Write-Host "Khong co file tam can xoa." -ForegroundColor Gray
+                    }
+                    Start-Sleep 2
+                    exit
                 }
             }
         }
