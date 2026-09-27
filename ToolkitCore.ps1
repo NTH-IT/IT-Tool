@@ -4,6 +4,13 @@
 $ErrorActionPreference = "SilentlyContinue"
 $LogFile = "$env:TEMP\toolkit_actions_$(Get-Date -Format yyyyMMdd_HHmmss).log"
 $Global:ESC = "##ESC##"
+$Global:NavPath = [System.Collections.Generic.List[string]]::new()
+function Write-Nav {
+    if ($Global:NavPath.Count -gt 0) {
+        Write-Host ("  [" + ($Global:NavPath -join ">") + "]") -ForegroundColor DarkCyan
+        Write-Host ""
+    }
+}
 
 function Write-Log { param([string]$M); Add-Content -Path $LogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $env:USERNAME | $M" }
 function Test-IsAdmin {
@@ -137,21 +144,28 @@ function Download-WithProgress {
 }
 
 function Show-Menu {
-    param([string]$Title,$Options)
+    param([string]$Title, $Options, [string]$NavEntry = "")
+    if ($NavEntry) { [void]$Global:NavPath.Add($NavEntry) }
     do {
         Clear-Host
+        Write-Nav
         Write-Host "===== $Title =====" -ForegroundColor Cyan
         foreach ($k in $Options.Keys) { Write-Host "$k. $($Options[$k].Label)" }
         Write-Host "0. Back"
         $c = Read-Esc "Chon: "
-        if ($c -eq $Global:ESC -or $c -eq "0") { return }
-        if ($Options.Contains($c)) { & $Options[$c].Action }
+        if ($c -eq $Global:ESC -or $c -eq "0") { break }
+        if ($Options.Contains($c)) {
+            [void]$Global:NavPath.Add($c)
+            & $Options[$c].Action
+            if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
+        }
     } while ($true)
+    if ($NavEntry -and $Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
 }
 
 function Run-Task {
     param([string]$Title,[scriptblock]$Action,[bool]$NeedConfirm=$false,[string]$ConfirmMsg="")
-    Clear-Host; Write-Host "=== $Title ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== $Title ===" -ForegroundColor Cyan
     if ($NeedConfirm -and (-not (Confirm-Action $ConfirmMsg))) { return }
     try { & $Action; Write-Log "$Title - OK"; Write-Host "`nHoan tat." -ForegroundColor Green }
     catch { Write-Log "$Title - LOI: $_"; Write-Host "`nLoi: $_" -ForegroundColor Red }
@@ -162,7 +176,7 @@ function Run-Task {
 # 1. NETWORK TROUBLESHOOT
 # ============================================================
 function Show-NetworkInfo {
-    Clear-Host; Write-Host "=== THONG TIN MANG HIEN TAI ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== THONG TIN MANG HIEN TAI ===" -ForegroundColor Cyan
     $cs = Get-CimInstance Win32_ComputerSystem
     Write-Host "Hostname          : $($cs.Name)"
     Write-Host "Domain/Workgroup  : $($cs.Domain)"
@@ -179,7 +193,7 @@ function Show-NetworkInfo {
 }
 
 function Set-ComputerNameDomain {
-    Clear-Host; Write-Host "=== DOI TEN MAY / DOMAIN ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== DOI TEN MAY / DOMAIN ===" -ForegroundColor Cyan
     $newName = Read-Esc "Hostname moi (Enter bo qua, ESC huy): "
     if ($newName -eq $Global:ESC) { return }
     $newDom = Read-Esc "Domain/Workgroup moi (Enter bo qua, ESC huy): "
@@ -203,7 +217,7 @@ function Reset-IPAddress {
 }
 
 function Set-StaticIP {
-    Clear-Host; Write-Host "=== DAT IP TINH ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== DAT IP TINH ===" -ForegroundColor Cyan
     $idx = Select-NetIdx; if ($null -eq $idx) { return }
     $ip = Read-IPEsc "Dia chi IP (vd: 192.168.1.50)"; if ($ip -eq $Global:ESC) { return }
     $prefixRaw = Read-Esc "Prefix / Subnet mask (mac dinh 24 / 255.255.255.0, Enter dung mac dinh): "
@@ -225,7 +239,7 @@ function Set-StaticIP {
 }
 
 function Set-StaticDNS {
-    Clear-Host; Write-Host "=== DAT DNS TINH ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== DAT DNS TINH ===" -ForegroundColor Cyan
     $idx = Select-NetIdx; if ($null -eq $idx) { return }
     $dns1 = Read-IPEsc "DNS uu tien (vd: 1.1.1.1)"; if ($dns1 -eq $Global:ESC) { return }
     $dns2 = Read-IPEsc "DNS thay the (vd: 8.8.8.8, ESC bo qua)"
@@ -252,7 +266,7 @@ function Reset-NetworkFull {
 }
 
 function Menu-Network {
-    Show-Menu -Title "1. NETWORK TROUBLESHOOT" -Options ([ordered]@{
+    Show-Menu -Title "1. NETWORK TROUBLESHOOT" -NavEntry "1" -Options ([ordered]@{
         "1"=@{Label="Kiem tra thong tin mang";Action={Show-NetworkInfo}}
         "2"=@{Label="Dat lai ten may (Hostname/Domain)";Action={Set-ComputerNameDomain}}
         "3"=@{Label="Xoa IP cu, nhan IP moi";Action={Reset-IPAddress}}
@@ -268,7 +282,7 @@ function Menu-Network {
 function Add-CheckRow { param($L,[string]$N,[bool]$P,[string]$D=""); $L.Add([PSCustomObject]@{Hang_muc=$N;Ket_qua=$(if($P){"[OK]"}else{"[LOI]"});Chi_tiet=$D}) }
 
 function Test-FileSharingLan {
-    Clear-Host; Write-Host "=== CHAN DOAN CAI DAT CHIA SE FILE QUA LAN ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== CHAN DOAN CAI DAT CHIA SE FILE QUA LAN ===" -ForegroundColor Cyan
     $r = New-Object System.Collections.ArrayList
     $s = Get-Service LanmanServer; Add-CheckRow $r "Service Server" ($s.Status -eq 'Running') $s.Status
     $w = Get-Service LanmanWorkstation; Add-CheckRow $r "Service Workstation" ($w.Status -eq 'Running') $w.Status
@@ -282,7 +296,7 @@ function Test-FileSharingLan {
 }
 
 function Test-PrinterPipeline {
-    Clear-Host; Write-Host "=== CHAN DOAN CAI DAT MAY IN ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== CHAN DOAN CAI DAT MAY IN ===" -ForegroundColor Cyan
     $r = New-Object System.Collections.ArrayList
     $s = Get-Service LanmanServer; Add-CheckRow $r "Server (LanmanServer)" ($s.Status -eq 'Running') $s.Status
     $rpc = Get-Service RpcSs; Add-CheckRow $r "RPC (RpcSs)" ($rpc.Status -eq 'Running') $rpc.Status
@@ -300,7 +314,7 @@ function Test-PrinterPipeline {
 }
 
 function Run-PrinterFixTool {
-    Clear-Host; Write-Host "=== CHAY PrinterFixTool.exe ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== CHAY PrinterFixTool.exe ===" -ForegroundColor Cyan
     $url = "https://www.dropbox.com/scl/fi/dcikx3xca62823quaeuua/PrinterFixTool.exe?rlkey=4hcris5xdgp0x4syv9tpp87la&st=yk97weqx&dl=1"
     $path = "$env:TEMP\PrinterFixTool_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
     $ok = Download-WithProgress -Url $url -Dest $path -Name "PrinterFixTool.exe"
@@ -316,7 +330,7 @@ function Run-PrinterFixTool {
 }
 
 function Menu-PrinterSharing {
-    Show-Menu -Title "2. PRINTER & FILE SHARING" -Options ([ordered]@{
+    Show-Menu -Title "2. PRINTER & FILE SHARING" -NavEntry "2" -Options ([ordered]@{
         "1"=@{Label="Chan doan cai dat chia se file qua LAN";Action={Test-FileSharingLan}}
         "2"=@{Label="Chan doan cai dat may in";Action={Test-PrinterPipeline}}
         "3"=@{Label="Chay PrinterFixTool.exe";Action={Run-PrinterFixTool}}
@@ -331,7 +345,7 @@ $FF_MAP   = @{7="SIMM";8="DIMM";12="SODIMM";13="SRIMM";14="FBDIMM"}
 $BAT_MAP  = @{1="Dang xa pin (Discharging)";2="Dang sac / AC";3="Day pin (Full)";4="Pin yeu (Low)";5="Pin toi han (Critical)";6="Dang sac (Charging)";7="Sac+Day";8="Sac+Pin yeu";9="Sac+Toi han";10="Khong xac dinh";11="Sac mot phan"}
 
 function Show-SoftwareInfo {
-    Clear-Host; Write-Host "=== THONG TIN PHAN MEM ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== THONG TIN PHAN MEM ===" -ForegroundColor Cyan
     $os = Get-CimInstance Win32_OperatingSystem; $cs = Get-CimInstance Win32_ComputerSystem
     Write-Host "Ten may           : $($cs.Name)"
     Write-Host "User dang dung    : $env:USERNAME"
@@ -352,7 +366,7 @@ function Show-SoftwareInfo {
 }
 
 function Show-HardwareInfoFull {
-    Clear-Host; Write-Host "=== THONG TIN PHAN CUNG ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== THONG TIN PHAN CUNG ===" -ForegroundColor Cyan
     $cs=Get-CimInstance Win32_ComputerSystem; $p=Get-CimInstance Win32_ComputerSystemProduct
     $b=Get-CimInstance Win32_BIOS; $os=Get-CimInstance Win32_OperatingSystem
     Write-Host "Hang san xuat : $($cs.Manufacturer)"
@@ -424,7 +438,7 @@ function Show-HardwareInfoFull {
 }
 
 function Show-LicenseInfo {
-    Clear-Host; Write-Host "=== BAN QUYEN WINDOWS / OFFICE ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== BAN QUYEN WINDOWS / OFFICE ===" -ForegroundColor Cyan
     cscript //nologo "$env:windir\System32\slmgr.vbs" /dli
     $ospp = Get-ChildItem "C:\Program Files\Microsoft Office\Office*\ospp.vbs","C:\Program Files (x86)\Microsoft Office\Office*\ospp.vbs" -EA SilentlyContinue | Select-Object -First 1
     if ($ospp) { Write-Host "`n-- Office --"; cscript //nologo $ospp.FullName /dstatus }
@@ -433,7 +447,7 @@ function Show-LicenseInfo {
 }
 
 function Remove-LicenseExceptMachine {
-    Clear-Host; Write-Host "=== GO BO BAN QUYEN (giu lai OEM digital license) ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== GO BO BAN QUYEN (giu lai OEM digital license) ===" -ForegroundColor Cyan
     Write-Host "Se GO product key dang cai (MAK/KMS/Retail)." -ForegroundColor Yellow
     cscript //nologo "$env:windir\System32\slmgr.vbs" /dli
     # Xac nhan lan 1: Y/N
@@ -452,7 +466,7 @@ function Remove-LicenseExceptMachine {
 }
 
 function Run-CanchinhOffice {
-    Clear-Host; Write-Host "=== THIET LAP OFFICE (CanchinhOffice.exe) ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== THIET LAP OFFICE (CanchinhOffice.exe) ===" -ForegroundColor Cyan
     $url = "https://www.dropbox.com/scl/fi/5mrj2a0mikqnlw7ioaxm1/CanchinhOffice.exe?rlkey=x21xpu6osowzz1oqyg2sryeg6&st=3zvg6nye&dl=1"
     $path = "$env:TEMP\CanchinhOffice_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
     $ok = Download-WithProgress -Url $url -Dest $path -Name "CanchinhOffice.exe"
@@ -466,7 +480,7 @@ function Run-CanchinhOffice {
 }
 
 function Menu-SystemInfo {
-    Show-Menu -Title "3. SYSTEM INFO & ACTIVATION" -Options ([ordered]@{
+    Show-Menu -Title "3. SYSTEM INFO & ACTIVATION" -NavEntry "3" -Options ([ordered]@{
         "1"=@{Label="Thong tin phan mem";Action={Show-SoftwareInfo}}
         "2"=@{Label="Thong tin phan cung";Action={Show-HardwareInfoFull}}
         "3"=@{Label="Thong tin ban quyen (Windows/Office)";Action={Show-LicenseInfo}}
@@ -485,7 +499,7 @@ function Invoke-CleanupFlow {
     param([bool]$Deep)
     $items=[ordered]@{"User Temp"="$env:TEMP";"Windows Temp"="$env:windir\Temp";"Windows Update"="$env:windir\SoftwareDistribution\Download";"Recycle Bin"="$env:SystemDrive\`$Recycle.Bin";"Error Reports"="$env:LOCALAPPDATA\Microsoft\Windows\WER"}
     if ($Deep) { $items["Packages"]="$env:LOCALAPPDATA\Packages"; $items["LocalLow"]="$env:USERPROFILE\AppData\LocalLow" }
-    Clear-Host; Write-Host "=== CLEANUP ANALYSIS ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== CLEANUP ANALYSIS ===" -ForegroundColor Cyan
     $total=0
     foreach ($k in $items.Keys) { $sz=Get-FolderSizeMB $items[$k]; $total+=$sz; Write-Host ("{0,-18} {1,10} MB" -f $k,$sz) }
     Write-Host "────────────────────────────"
@@ -508,7 +522,7 @@ function Invoke-CleanupFlow {
 }
 
 function Show-PerformanceDiag {
-    Clear-Host; Write-Host "=== PERFORMANCE DIAGNOSTIC ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== PERFORMANCE DIAGNOSTIC ===" -ForegroundColor Cyan
 
     # --- CPU ---
     Write-Host "`n--- CPU ---" -ForegroundColor Yellow
@@ -756,7 +770,7 @@ function Menu-Audio {
 }
 
 function Run-HardwareTest {
-    Clear-Host; Write-Host "=== HARDWARE CHECK (HardwareTest.exe) ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== HARDWARE CHECK (HardwareTest.exe) ===" -ForegroundColor Cyan
     $url = "https://www.dropbox.com/scl/fi/obzvj7tsrkfo3mpsxnb90/HardwareTest.exe?rlkey=i8s0kiwzugbxpzflzm1bd6bmn&st=9iecy4sc&dl=1"
     $path = "$env:TEMP\HardwareTest_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
     $ok = Download-WithProgress -Url $url -Dest $path -Name "HardwareTest.exe"
@@ -786,7 +800,7 @@ function Menu-AdvancedTools {
 }
 
 function Invoke-SystemRefresh {
-    Clear-Host; Write-Host "=== LAM MOI HE THONG / SYSTEM REFRESH ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== LAM MOI HE THONG / SYSTEM REFRESH ===" -ForegroundColor Cyan
     Write-Host "[1/5] Cap nhat Group Policy..." -ForegroundColor Yellow; gpupdate /force
     Write-Host "[2/5] Dong bo thoi gian + Timezone..." -ForegroundColor Yellow
     tzutil /s "SE Asia Standard Time"; w32tm /resync /force 2>$null
@@ -801,7 +815,7 @@ function Invoke-SystemRefresh {
 }
 
 function Menu-Maintenance {
-    Show-Menu -Title "4. SYSTEM MAINTENANCE / BAO TRI HE THONG" -Options ([ordered]@{
+    Show-Menu -Title "4. SYSTEM MAINTENANCE / BAO TRI HE THONG" -NavEntry "4" -Options ([ordered]@{
         "1"=@{Label="Windows Cleanup / Don dep Windows";Action={Menu-Cleanup}}
         "2"=@{Label="Performance / Hieu nang";Action={Menu-Performance}}
         "3"=@{Label="Power Management / Quan ly nguon dien";Action={Menu-PowerManagement}}
@@ -820,7 +834,7 @@ function Menu-Maintenance {
 # ============================================================
 function Open-Site {
     param([string]$Name,[string]$Url,[bool]$IsPlaceholder=$false)
-    Clear-Host; Write-Host "=== $Name ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== $Name ===" -ForegroundColor Cyan
     if ($IsPlaceholder) {
         Write-Host "Chua cau hinh URL cho '$Name'." -ForegroundColor Yellow
         Write-Host "Cap nhat link trong script (Menu-OtherSoftware)." -ForegroundColor Yellow
@@ -835,7 +849,7 @@ function Open-Site {
 
 
 function Run-FontViet {
-    Clear-Host; Write-Host "=== CAI DAT FONT CHU TIENG VIET (1398.exe) ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== CAI DAT FONT CHU TIENG VIET (1398.exe) ===" -ForegroundColor Cyan
     $url = "https://www.dropbox.com/scl/fi/nhg1tmopwvtumeukloelt/1398.exe?rlkey=lesaybeoat6h0rv6rvzzj8oif&st=k6qfnmd0&dl=1"
     $path = "$env:TEMP\1398_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
     $ok = Download-WithProgress -Url $url -Dest $path -Name "1398.exe"
@@ -856,8 +870,10 @@ function Menu-OtherSoftware {
 }
 
 function Menu-Software {
+    [void]$Global:NavPath.Add("5")
     do {
         Clear-Host
+        Write-Nav
         Write-Host "===== 5. SOFTWARE / PHAN MEM =====" -ForegroundColor Cyan
         Write-Host ""
         Write-Host "-- LIEN LAC / COMMUNICATION --" -ForegroundColor Yellow
@@ -902,39 +918,43 @@ function Menu-Software {
         Write-Host ""
         Write-Host "0. Back"
         $c = Read-Esc "Chon: "
-        if ($c -eq $Global:ESC -or $c -eq "0") { return }
+        if ($c -eq $Global:ESC -or $c -eq "0") { break }
+        [void]$Global:NavPath.Add($c)
         switch ($c) {
-            "1"  { Open-Site "Zalo PC"                  "https://zalo.me/pc" }
-            "2"  { Open-Site "Zoom"                     "https://zoom.us/download" }
-            "3"  { Open-Site "Telegram"                 "https://telegram.org/dl/desktop/win" }
-            "4"  { Open-Site "WeChat"                   "https://www.wechat.com/en/" }
-            "5"  { Open-Site "KakaoTalk"                "https://www.kakaocorp.com/page/service/all?lang=ENG" }
-            "6"  { Open-Site "Google Chrome"            "https://www.google.com/chrome/" }
-            "7"  { Open-Site "Coc Coc"                  "https://coccoc.com/download" }
+            "1"  { Open-Site "Zalo PC"                   "https://zalo.me/pc" }
+            "2"  { Open-Site "Zoom"                      "https://zoom.us/download" }
+            "3"  { Open-Site "Telegram"                  "https://telegram.org/dl/desktop/win" }
+            "4"  { Open-Site "WeChat"                    "https://www.wechat.com/en/" }
+            "5"  { Open-Site "KakaoTalk"                 "https://www.kakaocorp.com/page/service/all?lang=ENG" }
+            "6"  { Open-Site "Google Chrome"             "https://www.google.com/chrome/" }
+            "7"  { Open-Site "Coc Coc"                   "https://coccoc.com/download" }
             "8"  { Run-FontViet }
-            "9"  { Open-Site "Unikey"                   "https://www.unikey.org/download.html" }
-            "10" { Open-Site "Office 365"               "https://www.microsoft.com/en-us/microsoft-365/try" }
-            "11" { Open-Site "WPS Office"               "https://www.wps.com/download/" }
-            "12" { Open-Site "LibreOffice"              "https://www.libreoffice.org/download/download/" }
-            "13" { Open-Site "Foxit PDF Reader"         "https://www.foxit.com/pdf-reader/" }
-            "14" { Open-Site "PDFgear"                  "https://pdfgear.com/pdfgear-for-windows/" }
-            "15" { Open-Site "VLC"                      "https://www.videolan.org/vlc/download-windows.html" }
-            "16" { Open-Site "CapCut"                   "https://www.capcut.com/tools/pc-video-editor" }
-            "17" { Open-Site "OBS Studio"               "https://obsproject.com/download" }
-            "18" { Open-Site "WinRAR"                   "https://www.rarlab.com/download.htm" }
-            "19" { Open-Site "ImageGlass"               "https://imageglass.org/" }
-            "20" { Open-Site "AnyDesk"                  "https://anydesk.com/en/downloads/windows" }
-            "21" { Open-Site "UltraViewer"              "https://www.ultraviewer.net/en/download.html" }
-            "22" { Open-Site "Fliqlo Screensaver"       "https://fliqlo.com/screensaver/" }
-            "23" { Open-Site "Bing Wallpaper"           "https://www.microsoft.com/en-us/bing/bing-wallpaper" }
-            "24" { Open-Site "Crystal Disk Info"        "https://crystalmark.info/en/download/" }
-            "25" { Open-Site "Recoverit"                "https://recoverit.wondershare.com/" }
+            "9"  { Open-Site "Unikey"                    "https://www.unikey.org/download.html" }
+            "10" { Open-Site "Office 365"                "https://www.microsoft.com/en-us/microsoft-365/try" }
+            "11" { Open-Site "WPS Office"                "https://www.wps.com/download/" }
+            "12" { Open-Site "LibreOffice"               "https://www.libreoffice.org/download/download/" }
+            "13" { Open-Site "Foxit PDF Reader"          "https://www.foxit.com/pdf-reader/" }
+            "14" { Open-Site "PDFgear"                   "https://pdfgear.com/pdfgear-for-windows/" }
+            "15" { Open-Site "VLC"                       "https://www.videolan.org/vlc/download-windows.html" }
+            "16" { Open-Site "CapCut"                    "https://www.capcut.com/tools/pc-video-editor" }
+            "17" { Open-Site "OBS Studio"                "https://obsproject.com/download" }
+            "18" { Open-Site "WinRAR"                    "https://www.rarlab.com/download.htm" }
+            "19" { Open-Site "ImageGlass"                "https://imageglass.org/" }
+            "20" { Open-Site "AnyDesk"                   "https://anydesk.com/en/downloads/windows" }
+            "21" { Open-Site "UltraViewer"               "https://www.ultraviewer.net/en/download.html" }
+            "22" { Open-Site "Fliqlo Screensaver"        "https://fliqlo.com/screensaver/" }
+            "23" { Open-Site "Bing Wallpaper"            "https://www.microsoft.com/en-us/bing/bing-wallpaper" }
+            "24" { Open-Site "Crystal Disk Info"         "https://crystalmark.info/en/download/" }
+            "25" { Open-Site "Recoverit"                 "https://recoverit.wondershare.com/" }
             "26" { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" }
-            "27" { Open-Site "Double Driver"            "https://download.com.vn/double-driver-25157" }
+            "27" { Open-Site "Double Driver"             "https://download.com.vn/double-driver-25157" }
             "99" { Menu-OtherSoftware }
         }
+        if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
     } while ($true)
+    if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
 }
+
 
 # ============================================================
 # MAIN MENU
