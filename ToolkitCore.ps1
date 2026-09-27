@@ -254,15 +254,223 @@ function Set-StaticDNS {
 }
 
 function Reset-NetworkFull {
-    Run-Task -Title "RESET MANG VE MAC DINH" -NeedConfirm $true `
-      -ConfirmMsg "Xoa cau hinh mang, DNS, Data Usage. KHONG THE HOAN TAC." -Action {
-        netsh winsock reset; netsh int ip reset; netsh advfirewall reset
-        ipconfig /flushdns
+    Clear-Host; Write-Nav; Write-Host "=== RESET MANG ===" -ForegroundColor Cyan
+    $adapters = @(Get-NetAdapter | Where-Object Status -eq 'Up')
+    Write-Host ""
+    Write-Host ("  {0,-5} {1,-22} {2}" -f "Idx","Name","Description") -ForegroundColor Cyan
+    Write-Host ("  " + ("-"*56))
+    Write-Host ("  {0,-5} {1,-22} {2}" -f "ALL","--- TAT CA ---","Reset toan bo mang")
+    foreach ($a in $adapters) {
+        Write-Host ("  {0,-5} {1,-22} {2}" -f $a.InterfaceIndex, $a.Name, $a.InterfaceDescription)
+    }
+    Write-Host ""
+    $choice = Read-Esc "Nhap InterfaceIndex hoac ALL (Enter = tat ca): "
+    if ($choice -eq $Global:ESC) { return }
+    $isAll = ($choice -eq "" -or $choice.ToUpper() -eq "ALL")
+
+    if ($isAll) {
+        if (-not (Confirm-Action "Se reset TOAN BO mang: winsock, int ip, DNS, Data Usage. KHONG THE HOAN TAC.")) { return }
+        Write-Host "[1] winsock reset..."; netsh winsock reset
+        Write-Host "[2] int ip reset..."; netsh int ip reset
+        Write-Host "[3] advfirewall reset..."; netsh advfirewall reset
+        Write-Host "[4] flushdns..."; ipconfig /flushdns
+        Write-Host "[5] Reset DNS tren tat ca adapter..."
         Get-NetAdapter | ForEach-Object {
             Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex -ResetServerAddresses -EA SilentlyContinue
         }
         net stop dosvc 2>$null; net start dosvc 2>$null
+        Write-Log "Reset toan bo mang (ALL)"
+    } else {
+        [int]$idxNum = 0
+        if (-not [int]::TryParse($choice.Trim(),[ref]$idxNum)) {
+            Write-Host "Gia tri khong hop le." -ForegroundColor Red; Pause-Return; return
+        }
+        $ad = $adapters | Where-Object InterfaceIndex -eq $idxNum
+        if (-not $ad) { Write-Host "Khong tim thay interface $idxNum." -ForegroundColor Red; Pause-Return; return }
+        Write-Host ">> [$idxNum] $($ad.Name)" -ForegroundColor Yellow
+        if (-not (Confirm-Action "Reset interface nay: FlushDNS + Release + Winsock + IntIP + Renew. Can restart.")) { return }
+        Write-Host "[1/5] Flush DNS..."; ipconfig /flushdns
+        Write-Host "[2/5] Release IP ($($ad.Name))..."; ipconfig /release $ad.Name 2>$null
+        Write-Host "[3/5] Winsock reset (toan cuc)..."; netsh winsock reset
+        Write-Host "[4/5] Int IP reset..."; netsh int ip reset
+        Write-Host "[5/5] Renew IP ($($ad.Name))..."; ipconfig /renew $ad.Name 2>$null
+        Set-DnsClientServerAddress -InterfaceIndex $idxNum -ResetServerAddresses -EA SilentlyContinue
+        Write-Log "Reset interface $idxNum ($($ad.Name))"
     }
+    Write-Host "`nHoan tat. Khuyen nghi khoi dong lai may." -ForegroundColor Green
+    Pause-Return
+}
+
+
+function Invoke-QuickNetworkTest {
+    Clear-Host; Write-Nav; Write-Host "=== QUICK NETWORK TEST ===" -ForegroundColor Cyan
+    $idxNum = Select-NetIdx
+    if ($null -eq $idxNum) { return }
+    $adapter   = Get-NetAdapter | Where-Object InterfaceIndex -eq $idxNum
+    $ipConfig  = Get-NetIPConfiguration -InterfaceIndex $idxNum
+    $adIP      = $ipConfig.IPv4Address.IPAddress
+    $adGW      = $ipConfig.IPv4DefaultGateway.NextHop
+    Write-Host ""; Write-Host "Dang kiem tra..." -ForegroundColor Cyan; Write-Host ""
+
+    # 1. Adapter
+    $ok1 = $adapter.Status -eq 'Up'
+    Write-Host ("[{0}] Adapter    : {1} ({2})" -f $(if($ok1){"OK"}else{"X"}), $adapter.Name, $adapter.Status) -ForegroundColor $(if($ok1){'Green'}else{'Red'})
+    if (-not $ok1) { Write-Host "  Nguyen nhan: Adapter tat hoac cap khong cam." -ForegroundColor Yellow; Pause-Return; return }
+
+    # 2. IP
+    $ok2 = $adIP -ne $null
+    Write-Host ("[{0}] IP Address : {1}" -f $(if($ok2){"OK"}else{"X"}), $(if($ok2){$adIP}else{"Khong co IP"})) -ForegroundColor $(if($ok2){'Green'}else{'Red'})
+    if (-not $ok2) { Write-Host "  Nguyen nhan: Chua nhan duoc IP. Thu Renew IP (menu 3)." -ForegroundColor Yellow; Pause-Return; return }
+
+    # 3. Gateway ping
+    $ok3 = $false; $gwMs = 0
+    if ($adGW) {
+        $r = Test-Connection -ComputerName $adGW -Count 1 -EA SilentlyContinue
+        $ok3 = $null -ne $r; $gwMs = if($ok3){$r.ResponseTime}else{0}
+        Write-Host ("[{0}] Gateway    : {1} {2}" -f $(if($ok3){"OK"}else{"X"}), $adGW, $(if($ok3){"→ Ping ${gwMs}ms"}else{"→ KHONG PING DUOC"})) -ForegroundColor $(if($ok3){'Green'}else{'Yellow'})
+    } else {
+        Write-Host "[!] Gateway    : Khong co Gateway" -ForegroundColor Yellow
+    }
+
+    # 4. DNS
+    $ok4 = $false; $dnsIp = ""
+    try { $r4=[System.Net.Dns]::GetHostAddresses("google.com"); $ok4=$r4.Count-gt 0; $dnsIp=$r4[0].IPAddressToString } catch {}
+    Write-Host ("[{0}] DNS        : {1}" -f $(if($ok4){"OK"}else{"X"}), $(if($ok4){"Resolve google.com → $dnsIp"}else{"KHONG RESOLVE DUOC → kiem tra DNS"})) -ForegroundColor $(if($ok4){'Green'}else{'Red'})
+
+    # 5. Internet
+    $r5 = Test-Connection -ComputerName "8.8.8.8" -Count 1 -EA SilentlyContinue
+    $ok5 = $null -ne $r5
+    Write-Host ("[{0}] Internet   : {1}" -f $(if($ok5){"OK"}else{"X"}), $(if($ok5){"8.8.8.8 → Reachable ($($r5.ResponseTime)ms)"}else{"KHONG KET NOI INTERNET"})) -ForegroundColor $(if($ok5){'Green'}else{'Red'})
+
+    Write-Host ""; Write-Host ("─"*48) -ForegroundColor Cyan
+    $allOk = $ok1 -and $ok2 -and $ok4 -and $ok5
+    if ($allOk) { Write-Host "  Ket qua : TAT CA BINH THUONG" -ForegroundColor Green }
+    else        { Write-Host "  Ket qua : CO LOI - Xem huong dan tren" -ForegroundColor Red }
+    Write-Log "Quick Network Test - interface $idxNum"
+    Pause-Return
+}
+
+function Invoke-PingTool {
+    Clear-Host; Write-Nav; Write-Host "=== PING ===" -ForegroundColor Cyan
+    Write-Host ""
+    $target = Read-Esc "Nhap target (IP hoac domain): "
+    if ($target -eq $Global:ESC -or $target -eq "") { return }
+    $cntStr = Read-Esc "So goi (mac dinh 10, Enter = 10): "
+    if ($cntStr -eq $Global:ESC) { return }
+    [int]$cnt = if ($cntStr -match "^\d+$" -and [int]$cntStr -gt 0) { [int]$cntStr } else { 10 }
+
+    Clear-Host; Write-Nav; Write-Host "=== PING ===" -ForegroundColor Cyan
+    Write-Host "Target : $target"
+    Write-Host "Count  : $cnt"; Write-Host ""
+
+    $pingOut = & ping.exe -n $cnt $target | ForEach-Object { Write-Host $_; $_ }
+
+    $sent = $cnt; $lost = 0; $minMs = -1; $avgMs = -1; $maxMs = -1
+    foreach ($line in $pingOut) {
+        if ($line -match "Sent\s*=\s*(\d+)")     { $sent  = [int]$Matches[1] }
+        if ($line -match "Lost\s*=\s*(\d+)")     { $lost  = [int]$Matches[1] }
+        if ($line -match "Minimum\s*=\s*(\d+)")  { $minMs = [int]$Matches[1] }
+        if ($line -match "Maximum\s*=\s*(\d+)")  { $maxMs = [int]$Matches[1] }
+        if ($line -match "Average\s*=\s*(\d+)")  { $avgMs = [int]$Matches[1] }
+    }
+    # Fallback nếu ping output tiếng Việt
+    if ($minMs -eq -1) {
+        $times = @($pingOut | ForEach-Object { if ($_ -match "time[<=](\d+)ms") { [int]$Matches[1] } })
+        if ($times.Count -gt 0) {
+            $minMs = ($times | Measure-Object -Minimum).Minimum
+            $maxMs = ($times | Measure-Object -Maximum).Maximum
+            $avgMs = [math]::Round(($times | Measure-Object -Average).Average,0)
+        }
+        $timedOut = @($pingOut | Where-Object { $_ -match "Request timed out|Yeu cau het thoi gian" }).Count
+        if ($timedOut -gt 0) { $lost = $timedOut }
+    }
+
+    $lostPct = if ($sent -gt 0) { [math]::Round($lost/$sent*100,0) } else { 100 }
+    Write-Host ""; Write-Host ("─"*38) -ForegroundColor Cyan
+    Write-Host ("Packets   : $sent sent")
+    Write-Host ("Lost      : $lost ($lostPct%)")
+    if ($minMs -ge 0) {
+        Write-Host ("Min       : $minMs ms")
+        Write-Host ("Avg       : $avgMs ms")
+        Write-Host ("Max       : $maxMs ms")
+    }
+    Write-Host ""
+    $rating = if ($lostPct -eq 0 -and $avgMs -lt 50) { "[OK] GOOD", "Green" }
+              elseif ($lostPct -lt 20 -and $avgMs -lt 150) { "[!] FAIR", "Yellow" }
+              else { "[X] POOR", "Red" }
+    Write-Host $rating[0] -ForegroundColor $rating[1]
+    Write-Log "Ping $target x$cnt → Lost=$lostPct% Avg=${avgMs}ms"
+    Pause-Return
+}
+
+function Invoke-NetworkQuality {
+    Clear-Host; Write-Nav; Write-Host "=== NETWORK QUALITY (25 giay) ===" -ForegroundColor Cyan
+    Write-Host "Ping xen ke 8.8.8.8 va 1.1.1.1 trong 25 giay + Speed Test..." -ForegroundColor Gray
+    Write-Host ""
+    $targets   = @("8.8.8.8","1.1.1.1")
+    $latencies = [System.Collections.Generic.List[int]]::new()
+    $jitters   = [System.Collections.Generic.List[double]]::new()
+    $lost = 0; $total = 0; $prevMs = -1; $ti = 0; $duration = 25
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    while ($sw.Elapsed.TotalSeconds -lt $duration) {
+        $tgt = $targets[$ti % 2]; $ti++; $total++
+        $r = Test-Connection -ComputerName $tgt -Count 1 -EA SilentlyContinue
+        $elapsedS = [int]$sw.Elapsed.TotalSeconds
+        $pct  = [math]::Min(100, [math]::Round($elapsedS / $duration * 100))
+        $fill = [int]($pct / 5)
+        $bar  = "#" * $fill + "-" * (20 - $fill)
+        if ($r) {
+            $ms = $r.ResponseTime
+            $latencies.Add($ms)
+            if ($prevMs -ge 0) { $jitters.Add([math]::Abs($ms - $prevMs)) }
+            $prevMs = $ms
+            Write-Host -NoNewline "`r  [$bar] $pct%  $total goi  ${tgt}: ${ms}ms     "
+        } else {
+            $lost++
+            Write-Host -NoNewline "`r  [$bar] $pct%  $total goi  ${tgt}: TIMEOUT    "
+        }
+        Start-Sleep -Milliseconds 600
+    }
+    Write-Host ""; Write-Host ""
+
+    # Speed test
+    Write-Host "Dang do toc do download (Cloudflare 5MB)..." -ForegroundColor Yellow
+    $dlMbps = -1
+    try {
+        $dlSw = [System.Diagnostics.Stopwatch]::StartNew()
+        $wc2  = New-Object System.Net.WebClient
+        $wc2.Headers.Add("User-Agent","Mozilla/5.0")
+        $data = $wc2.DownloadData("https://speed.cloudflare.com/__down?bytes=5000000")
+        $dlSw.Stop()
+        if ($data.Length -gt 0) { $dlMbps = [math]::Round(($data.Length/1MB)/$dlSw.Elapsed.TotalSeconds,2) }
+    } catch {}
+
+    # Tính kết quả
+    $lossPct   = if ($total -gt 0) { [math]::Round($lost/$total*100,1) } else { 100 }
+    $avgLat    = if ($latencies.Count -gt 0) { [math]::Round(($latencies | Measure-Object -Average).Average,1) } else { 999 }
+    $minLat    = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Minimum).Minimum } else { 0 }
+    $maxLat    = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Maximum).Maximum } else { 0 }
+    $avgJitter = if ($jitters.Count -gt 0)   { [math]::Round(($jitters | Measure-Object -Average).Average,1) } else { 0 }
+
+    Write-Host "=== KET QUA ===" -ForegroundColor Cyan
+    Write-Host ("  Latency (Avg)  : {0,8} ms" -f $avgLat)
+    Write-Host ("  Packet Loss    : {0,8} %" -f $lossPct)
+    Write-Host ("  Jitter         : {0,8} ms" -f $avgJitter)
+    Write-Host ("  Min            : {0,8} ms" -f $minLat)
+    Write-Host ("  Max            : {0,8} ms" -f $maxLat)
+    if ($dlMbps -gt 0) { Write-Host ("  Download Speed : {0,6} MB/s" -f $dlMbps) -ForegroundColor Cyan }
+    else               { Write-Host "  Download Speed : (Khong do duoc)" -ForegroundColor Gray }
+    Write-Host ""
+
+    $ratingText, $ratingColor =
+        if ($avgLat -lt 30 -and $lossPct -eq 0 -and $avgJitter -lt 5)  { "[OK] EXCELLENT - Rat tot cho gaming / video call",   "Green"  }
+        elseif ($avgLat -lt 60 -and $lossPct -lt 1 -and $avgJitter -lt 15) { "[OK] GOOD      - Ket noi binh thuong",           "Green"  }
+        elseif ($avgLat -lt 100 -and $lossPct -lt 5)                    { "[!] FAIR       - Co the bi lag nhe",                "Yellow" }
+        else                                                             { "[X] POOR       - Ket noi yeu hoac khong on dinh",   "Red"    }
+    Write-Host $ratingText -ForegroundColor $ratingColor
+    Write-Log "Network Quality: Lat=${avgLat}ms Loss=${lossPct}% Jitter=${avgJitter}ms DL=${dlMbps}MB/s"
+    Pause-Return
 }
 
 function Menu-Network {
@@ -272,7 +480,10 @@ function Menu-Network {
         "3"=@{Label="Xoa IP cu, nhan IP moi";Action={Reset-IPAddress}}
         "4"=@{Label="Dat IP tinh";Action={Set-StaticIP}}
         "5"=@{Label="Dat DNS tinh";Action={Set-StaticDNS}}
-        "6"=@{Label="Reset mang ve mac dinh";Action={Reset-NetworkFull}}
+        "6"=@{Label="Reset mang (chon Interface / ALL)";Action={Reset-NetworkFull}}
+        "7"=@{Label="Quick Network Test";Action={Invoke-QuickNetworkTest}}
+        "8"=@{Label="Ping";Action={Invoke-PingTool}}
+        "9"=@{Label="Network Quality (25s + Speed Test)";Action={Invoke-NetworkQuality}}
     })
 }
 
