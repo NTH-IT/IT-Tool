@@ -69,8 +69,14 @@ function Get-PrefixLength {
 }
 
 function Select-NetIdx {
-    $adapters = Get-NetAdapter | Where-Object Status -eq 'Up'
-    $adapters | Format-Table InterfaceIndex, Name, InterfaceDescription -AutoSize | Out-Host
+    $adapters = @(Get-NetAdapter | Where-Object Status -eq 'Up')
+    Write-Host ""
+    Write-Host ("  {0,-5} {1,-22} {2}" -f "Idx","Name","Description") -ForegroundColor Cyan
+    Write-Host ("  " + ("-"*56))
+    foreach ($a in $adapters) {
+        Write-Host ("  {0,-5} {1,-22} {2}" -f $a.InterfaceIndex, $a.Name, ($a.InterfaceDescription -replace '^\s+',''))
+    }
+    Write-Host ""
     while ($true) {
         $idxStr = Read-Esc "Nhap InterfaceIndex: "
         if ($idxStr -eq $Global:ESC) { return $null }
@@ -628,7 +634,9 @@ function Menu-PowerManagement {
             $out = [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'battery-report.html')
             if (Test-Path $out) { Remove-Item $out -Force -EA SilentlyContinue }
             Write-Host "Dang tao bao cao pin..." -ForegroundColor Yellow
-            cmd /c "powercfg /batteryreport /output `"$out`"" 2>&1 | Out-Null
+            Push-Location ([Environment]::GetFolderPath('Desktop'))
+            cmd /c "powercfg /batteryreport" 2>&1 | Out-Null
+            Pop-Location
             Start-Sleep 2
             if (Test-Path $out) { Write-Host "Da xuat: $out" -ForegroundColor Green; Start-Process $out }
             else { Write-Host "Khong xuat duoc. May co the la PC ban (khong co pin)." -ForegroundColor Yellow }
@@ -640,15 +648,23 @@ function Menu-PowerManagement {
             $out = [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'energy-report.html')
             if (Test-Path $out) { Remove-Item $out -Force -EA SilentlyContinue }
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            $job = Start-Job -ScriptBlock {
-                param($o) cmd /c "powercfg /energy /output `"$o`" /duration 20" 2>&1
-            } -ArgumentList $out
-            while ($job.State -eq 'Running') {
+            $rs = [RunspaceFactory]::CreateRunspace(); $rs.Open()
+            $psEnergy = [PowerShell]::Create(); $psEnergy.Runspace = $rs
+            [void]$psEnergy.AddScript({
+                param($desk)
+                Push-Location $desk
+                cmd /c "powercfg /energy /duration 20" 2>&1 | Out-Null
+                Pop-Location
+            }).AddArgument([Environment]::GetFolderPath('Desktop'))
+            $handle = $psEnergy.BeginInvoke()
+            while (-not $handle.IsCompleted) {
                 $pct = [math]::Min(99, [math]::Round($sw.Elapsed.TotalSeconds / 25 * 100))
                 Write-Host -NoNewline "`r  Dang phan tich: $pct% - $([math]::Round($sw.Elapsed.TotalSeconds,0))s  "
                 Start-Sleep -Milliseconds 500
             }
-            Write-Host ""; Receive-Job $job -EA SilentlyContinue | Out-Null; Remove-Job $job -Force -EA SilentlyContinue; $sw.Stop()
+            Write-Host ""
+            try { $psEnergy.EndInvoke($handle) | Out-Null } catch {}
+            $psEnergy.Dispose(); $rs.Dispose(); $sw.Stop()
             if (Test-Path $out) { Write-Host "Da xuat: $out ($([math]::Round($sw.Elapsed.TotalSeconds,0))s)" -ForegroundColor Green; Start-Process $out }
             else { Write-Host "Khong xuat duoc." -ForegroundColor Yellow }
         }}}
@@ -856,24 +872,24 @@ function Menu-Software {
         Write-Host "7. Coc Coc"
         Write-Host ""
         Write-Host "-- OFFICE / VAN PHONG --" -ForegroundColor Yellow
-        Write-Host "8.  Office 365"
-        Write-Host "9.  WPS Office"
-        Write-Host "10. LibreOffice"
-        Write-Host "11. Foxit PDF Reader"
-        Write-Host "12. PDFgear (Edit PDF)"
-        Write-Host "13. Font chu tieng Viet (1398.exe)"
+        Write-Host "8.  Cai dat font chu Viet Nam (1398.exe)"
+        Write-Host "9.  Unikey"
+        Write-Host "10. Office 365"
+        Write-Host "11. WPS Office"
+        Write-Host "12. LibreOffice"
+        Write-Host "13. Foxit PDF Reader"
+        Write-Host "14. PDFgear (Edit PDF)"
         Write-Host ""
         Write-Host "-- MEDIA & TRUYEN THONG --" -ForegroundColor Yellow
-        Write-Host "14. VLC"
-        Write-Host "15. CapCut"
-        Write-Host "16. OBS Studio"
+        Write-Host "15. VLC"
+        Write-Host "16. CapCut"
+        Write-Host "17. OBS Studio"
         Write-Host ""
         Write-Host "-- CONG CU HE THONG / SYSTEM TOOLS --" -ForegroundColor Yellow
-        Write-Host "17. WinRAR"
-        Write-Host "18. ImageGlass"
-        Write-Host "19. AnyDesk"
-        Write-Host "20. UltraViewer"
-        Write-Host "21. Unikey"
+        Write-Host "18. WinRAR"
+        Write-Host "19. ImageGlass"
+        Write-Host "20. AnyDesk"
+        Write-Host "21. UltraViewer"
         Write-Host "22. Man hinh cho Fliqlo"
         Write-Host "23. Bing Wallpaper"
         Write-Host "24. Crystal Disk Info"
@@ -895,20 +911,20 @@ function Menu-Software {
             "5"  { Open-Site "KakaoTalk"                "https://www.kakaocorp.com/page/service/all?lang=ENG" }
             "6"  { Open-Site "Google Chrome"            "https://www.google.com/chrome/" }
             "7"  { Open-Site "Coc Coc"                  "https://coccoc.com/download" }
-            "8"  { Open-Site "Office 365"               "https://www.microsoft.com/en-us/microsoft-365/try" }
-            "9"  { Open-Site "WPS Office"               "https://www.wps.com/download/" }
-            "10" { Open-Site "LibreOffice"              "https://www.libreoffice.org/download/download/" }
-            "11" { Open-Site "Foxit PDF Reader"         "https://www.foxit.com/pdf-reader/" }
-            "12" { Open-Site "PDFgear"                  "https://pdfgear.com/pdfgear-for-windows/" }
-            "13" { Run-FontViet }
-            "14" { Open-Site "VLC"                      "https://www.videolan.org/vlc/download-windows.html" }
-            "15" { Open-Site "CapCut"                   "https://www.capcut.com/tools/pc-video-editor" }
-            "16" { Open-Site "OBS Studio"               "https://obsproject.com/download" }
-            "17" { Open-Site "WinRAR"                   "https://www.rarlab.com/download.htm" }
-            "18" { Open-Site "ImageGlass"               "https://imageglass.org/" }
-            "19" { Open-Site "AnyDesk"                  "https://anydesk.com/en/downloads/windows" }
-            "20" { Open-Site "UltraViewer"              "https://www.ultraviewer.net/en/download.html" }
-            "21" { Open-Site "Unikey"                   "https://www.unikey.org/download.html" }
+            "8"  { Run-FontViet }
+            "9"  { Open-Site "Unikey"                   "https://www.unikey.org/download.html" }
+            "10" { Open-Site "Office 365"               "https://www.microsoft.com/en-us/microsoft-365/try" }
+            "11" { Open-Site "WPS Office"               "https://www.wps.com/download/" }
+            "12" { Open-Site "LibreOffice"              "https://www.libreoffice.org/download/download/" }
+            "13" { Open-Site "Foxit PDF Reader"         "https://www.foxit.com/pdf-reader/" }
+            "14" { Open-Site "PDFgear"                  "https://pdfgear.com/pdfgear-for-windows/" }
+            "15" { Open-Site "VLC"                      "https://www.videolan.org/vlc/download-windows.html" }
+            "16" { Open-Site "CapCut"                   "https://www.capcut.com/tools/pc-video-editor" }
+            "17" { Open-Site "OBS Studio"               "https://obsproject.com/download" }
+            "18" { Open-Site "WinRAR"                   "https://www.rarlab.com/download.htm" }
+            "19" { Open-Site "ImageGlass"               "https://imageglass.org/" }
+            "20" { Open-Site "AnyDesk"                  "https://anydesk.com/en/downloads/windows" }
+            "21" { Open-Site "UltraViewer"              "https://www.ultraviewer.net/en/download.html" }
             "22" { Open-Site "Fliqlo Screensaver"       "https://fliqlo.com/screensaver/" }
             "23" { Open-Site "Bing Wallpaper"           "https://www.microsoft.com/en-us/bing/bing-wallpaper" }
             "24" { Open-Site "Crystal Disk Info"        "https://crystalmark.info/en/download/" }
