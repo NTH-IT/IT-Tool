@@ -398,22 +398,22 @@ function Invoke-PingTool {
         Write-Host ("Max       : $maxMs ms")
     }
     Write-Host ""
-    $rating = if ($lostPct -eq 0 -and $avgMs -lt 50) { "[OK] GOOD", "Green" }
-              elseif ($lostPct -lt 20 -and $avgMs -lt 150) { "[!] FAIR", "Yellow" }
-              else { "[X] POOR", "Red" }
+    $rating = if ($lostPct -eq 0 -and $avgMs -lt 120)     { "[OK] GOOD - Ket noi on dinh", "Green" }
+              elseif ($lostPct -lt 10 -and $avgMs -lt 300) { "[!] FAIR - Co loss hoac lag",  "Yellow" }
+              else                                          { "[X] POOR - Mat nhieu goi/tre cao", "Red" }
     Write-Host $rating[0] -ForegroundColor $rating[1]
     Write-Log "Ping $target x$cnt → Lost=$lostPct% Avg=${avgMs}ms"
     Pause-Return
 }
 
 function Invoke-NetworkQuality {
-    Clear-Host; Write-Nav; Write-Host "=== NETWORK QUALITY (25 giay) ===" -ForegroundColor Cyan
-    Write-Host "Ping xen ke 8.8.8.8 va 1.1.1.1 trong 25 giay + Speed Test..." -ForegroundColor Gray
+    Clear-Host; Write-Nav; Write-Host "=== NETWORK QUALITY (60 giay) ===" -ForegroundColor Cyan
+    Write-Host "Ping xen ke 8.8.8.8 va 1.1.1.1 trong 60 giay + Speed Test..." -ForegroundColor Gray
     Write-Host ""
     $targets   = @("8.8.8.8","1.1.1.1")
     $latencies = [System.Collections.Generic.List[int]]::new()
     $jitters   = [System.Collections.Generic.List[double]]::new()
-    $lost = 0; $total = 0; $prevMs = -1; $ti = 0; $duration = 25
+    $lost = 0; $total = 0; $prevMs = -1; $ti = 0; $duration = 60
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
     while ($sw.Elapsed.TotalSeconds -lt $duration) {
@@ -466,11 +466,12 @@ function Invoke-NetworkQuality {
     else               { Write-Host "  Download Speed : (Khong do duoc)" -ForegroundColor Gray }
     Write-Host ""
 
+    # Tieu chi phu hop thuc te Viet Nam (target 8.8.8.8 may chu o Singapore)
     $ratingText, $ratingColor =
-        if ($avgLat -lt 30 -and $lossPct -eq 0 -and $avgJitter -lt 5)  { "[OK] EXCELLENT - Rat tot cho gaming / video call",   "Green"  }
-        elseif ($avgLat -lt 60 -and $lossPct -lt 1 -and $avgJitter -lt 15) { "[OK] GOOD      - Ket noi binh thuong",           "Green"  }
-        elseif ($avgLat -lt 100 -and $lossPct -lt 5)                    { "[!] FAIR       - Co the bi lag nhe",                "Yellow" }
-        else                                                             { "[X] POOR       - Ket noi yeu hoac khong on dinh",   "Red"    }
+        if ($avgLat -lt 60 -and $lossPct -eq 0 -and $avgJitter -lt 10)      { "[OK] EXCELLENT - Rat tot (gaming/video call muot)",    "Green"  }
+        elseif ($avgLat -lt 120 -and $lossPct -lt 1 -and $avgJitter -lt 25) { "[OK] GOOD      - Binh thuong (streaming on dinh)",    "Green"  }
+        elseif ($avgLat -lt 200 -and $lossPct -lt 5)                         { "[!] FAIR       - Co the bi lag nhe",                 "Yellow" }
+        else                                                                  { "[X] POOR       - Ket noi yeu hoac khong on dinh",    "Red"    }
     Write-Host $ratingText -ForegroundColor $ratingColor
     Write-Log "Network Quality: Lat=${avgLat}ms Loss=${lossPct}% Jitter=${avgJitter}ms DL=${dlMbps}MB/s"
     Pause-Return
@@ -711,118 +712,102 @@ function Get-FolderSizeMB { param([string]$P); if(-not(Test-Path $P)){return 0};
 
 function Invoke-CleanupFlow {
     param([bool]$Deep)
-    $items=[ordered]@{"User Temp"="$env:TEMP";"Windows Temp"="$env:windir\Temp";"Windows Update"="$env:windir\SoftwareDistribution\Download";"Recycle Bin"="$env:SystemDrive\`$Recycle.Bin";"Error Reports"="$env:LOCALAPPDATA\Microsoft\Windows\WER"}
-    if ($Deep) { $items["Packages"]="$env:LOCALAPPDATA\Packages"; $items["LocalLow"]="$env:USERPROFILE\AppData\LocalLow" }
-    Clear-Host; Write-Nav; Write-Host "=== CLEANUP ANALYSIS ===" -ForegroundColor Cyan
-    $total=0
-    foreach ($k in $items.Keys) { $sz=Get-FolderSizeMB $items[$k]; $total+=$sz; Write-Host ("{0,-18} {1,10} MB" -f $k,$sz) }
-    Write-Host "────────────────────────────"
-    Write-Host ("{0,-18} {1,10} MB" -f "Potentially removable",[math]::Round($total,2)) -ForegroundColor Yellow
-    $c = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
-    if ($c -eq $Global:ESC -or $c.ToUpper() -ne "Y") { Pause-Return; return }
-    foreach ($k in $items.Keys) {
-        if ($k -eq "Recycle Bin") { Clear-RecycleBin -Force -EA SilentlyContinue; continue }
-        Remove-Item "$($items[$k])\*" -Recurse -Force -EA SilentlyContinue
+    Clear-Host; Write-Nav
+    Write-Host "=== CLEANUP ANALYSIS ===" -ForegroundColor Cyan
+    Write-Host "Dang quet..." -ForegroundColor Gray
+    Write-Host ""
+
+    $total = [double]0
+    function Write-ItemRow([string]$Name,[double]$Sz) {
+        $script:total += $Sz
+        Write-Host ("{0,-24} {1,8:F1} MB" -f $Name, $Sz)
     }
+
+    # ── QUICK items ──
+    Write-Host "--- DON QUA ---" -ForegroundColor Yellow
+    Write-ItemRow "User Temp"        (Get-FolderSizeMB $env:TEMP)
+    Write-ItemRow "Windows Temp"     (Get-FolderSizeMB "$env:windir\Temp")
+    Write-ItemRow "Windows Update"   (Get-FolderSizeMB "$env:windir\SoftwareDistribution\Download")
+    Write-ItemRow "Error Reports"    (Get-FolderSizeMB "$env:LOCALAPPDATA\Microsoft\Windows\WER")
+    $bsz = 0
+    foreach ($bp in @(
+        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache",
+        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Code Cache",
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache",
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Code Cache")) { $bsz += Get-FolderSizeMB $bp }
+    try {
+        Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory -EA Stop | ForEach-Object {
+            $bsz += Get-FolderSizeMB "$($_.FullName)\cache2" }
+    } catch {}
+    Write-ItemRow "Browser Cache"    $bsz
+    $thumbSz = [math]::Round((Get-ChildItem "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache_*.db" -EA SilentlyContinue | Measure-Object Length -Sum).Sum/1MB,1)
+    Write-ItemRow "Thumbnail Cache"  $thumbSz
+    Write-ItemRow "D3D Shader Cache" (Get-FolderSizeMB "$env:LOCALAPPDATA\D3DSCache")
+    Write-ItemRow "DNS Cache"        0
+
+    # ── DEEP items ──
     if ($Deep) {
+        Write-Host ""
+        Write-Host "--- DON KY (them) ---" -ForegroundColor Yellow
+        Write-ItemRow "Recycle Bin"  (Get-FolderSizeMB "$env:SystemDrive\`$Recycle.Bin")
+        Write-ItemRow "UWP Packages" (Get-FolderSizeMB "$env:LOCALAPPDATA\Packages")
+        Write-ItemRow "LocalLow"     (Get-FolderSizeMB "$env:USERPROFILE\AppData\LocalLow")
+        Write-ItemRow "SRU Database" (Get-FolderSizeMB "$env:windir\System32\sru")
+        $dSz = 0
+        if (Test-Path "$env:windir\MEMORY.DMP") { $dSz += [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length/1MB,1) }
+        $dSz += Get-FolderSizeMB "$env:windir\Minidump"
+        Write-ItemRow "Memory Dumps" $dSz
+        Write-ItemRow "Prefetch"     (Get-FolderSizeMB "$env:windir\Prefetch")
+        $evSz = 0
+        try { $evSz = [math]::Round((Get-WinEvent -ListLog * -EA Stop | Where-Object FileSize | Measure-Object FileSize -Sum).Sum/1MB,1) } catch {}
+        Write-ItemRow "Event Logs"   $evSz
+    }
+
+    Write-Host ("─"*34) -ForegroundColor Cyan
+    Write-Host ("{0,-24} {1,8:F1} MB" -f "Potentially removable", $total) -ForegroundColor Yellow
+
+    $ch = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
+    if ($ch -eq $Global:ESC -or $ch.ToUpper() -ne "Y") { Pause-Return; return }
+
+    # ── Thực hiện xóa Quick ──
+    foreach ($p in @(
+        "$env:TEMP",
+        "$env:windir\Temp",
+        "$env:windir\SoftwareDistribution\Download",
+        "$env:LOCALAPPDATA\Microsoft\Windows\WER",
+        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache",
+        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Code Cache",
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache",
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Code Cache",
+        "$env:LOCALAPPDATA\D3DSCache")) {
+        if (Test-Path $p) { Remove-Item "$p\*" -Recurse -Force -EA SilentlyContinue }
+    }
+    try {
+        Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory -EA Stop | ForEach-Object {
+            Remove-Item "$($_.FullName)\cache2\*" -Recurse -Force -EA SilentlyContinue }
+    } catch {}
+    Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache_*.db" -Force -EA SilentlyContinue
+    ipconfig /flushdns | Out-Null
+
+    # ── Thực hiện xóa Deep ──
+    if ($Deep) {
+        Clear-RecycleBin -Force -EA SilentlyContinue
+        Remove-Item "$env:LOCALAPPDATA\Packages\*"        -Recurse -Force -EA SilentlyContinue
+        Remove-Item "$env:USERPROFILE\AppData\LocalLow\*" -Recurse -Force -EA SilentlyContinue
         Stop-Service DPS -Force -EA SilentlyContinue
         Remove-Item "$env:windir\System32\sru\*" -Force -EA SilentlyContinue
         Start-Service DPS -EA SilentlyContinue
+        Remove-Item "$env:windir\MEMORY.DMP"        -Force -EA SilentlyContinue
+        Remove-Item "$env:windir\Minidump\*" -Recurse -Force -EA SilentlyContinue
+        Remove-Item "$env:windir\Prefetch\*"        -Force -EA SilentlyContinue
         wevtutil el | ForEach-Object { wevtutil cl "$_" 2>$null }
     }
-    $actual=0; foreach($k in $items.Keys){$actual+=Get-FolderSizeMB $items[$k]}
-    Write-Log "$(if($Deep){'Deep'}else{'Quick'}) Clean - $total MB"
-    Write-Host "`nDa don xong. Da giai phong: $([math]::Round($total-$actual,2)) MB" -ForegroundColor Green; Pause-Return
+
+    Write-Log "$(if($Deep){'Deep'}else{'Quick'}) Clean - pre-scan ~$([math]::Round($total,1)) MB"
+    Write-Host "`nDa don xong. Da giai phong uoc tinh: ~$([math]::Round($total,1)) MB" -ForegroundColor Green
+    Pause-Return
 }
 
-function Show-PerformanceDiag {
-    Clear-Host; Write-Nav; Write-Host "=== PERFORMANCE DIAGNOSTIC ===" -ForegroundColor Cyan
-
-    # --- CPU ---
-    Write-Host "`n--- CPU ---" -ForegroundColor Yellow
-    $cpu = Get-CimInstance Win32_Processor
-    Write-Host "CPU % su dung  : $($cpu.LoadPercentage)%"
-    Write-Host "Top 5 CPU Processes:"
-    Get-Process | Where-Object CPU | Sort-Object CPU -Descending | Select-Object -First 5 | ForEach-Object {
-        Write-Host ("  {0,-25} CPU: {1,8:F1}s" -f $_.Name, $_.CPU)
-    }
-
-    # --- RAM ---
-    Write-Host "`n--- RAM ---" -ForegroundColor Yellow
-    $os = Get-CimInstance Win32_OperatingSystem
-    $totalRAM = [math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
-    $availRAM = [math]::Round($os.FreePhysicalMemory / 1MB, 2)
-    $usedRAM  = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 2)
-    $ramPct   = [math]::Round(($usedRAM / $totalRAM) * 100, 1)
-    Write-Host "Total RAM      : $totalRAM GB"
-    Write-Host "Used RAM       : $usedRAM GB"
-    Write-Host "Available RAM  : $availRAM GB"
-    Write-Host "RAM % su dung  : $ramPct%"
-    $pf = Get-CimInstance Win32_PageFileUsage
-    if ($pf) { Write-Host "Page File      : $($pf.CurrentUsage) MB / $($pf.AllocatedBaseSize) MB" }
-    $pressure = if ($ramPct -gt 90) { "CRITICAL" } elseif ($ramPct -gt 75) { "HIGH" } elseif ($ramPct -gt 50) { "MODERATE" } else { "NORMAL" }
-    Write-Host "Memory Pressure: $pressure" -ForegroundColor $(if ($ramPct -gt 75) { 'Red' } elseif ($ramPct -gt 50) { 'Yellow' } else { 'Green' })
-    Write-Host "Top 5 RAM Processes:"
-    Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5 | ForEach-Object {
-        Write-Host ("  {0,-25} RAM: {1,6:F0} MB" -f $_.Name, ($_.WorkingSet64 / 1MB))
-    }
-
-    # --- DISK ---
-    Write-Host "`n--- DISK PERFORMANCE ---" -ForegroundColor Yellow
-    try {
-        $diskCounters = Get-Counter -Counter @(
-            "\PhysicalDisk(*)\% Disk Time",
-            "\PhysicalDisk(*)\Disk Read Bytes/sec",
-            "\PhysicalDisk(*)\Disk Write Bytes/sec",
-            "\PhysicalDisk(*)\Avg. Disk sec/Transfer",
-            "\PhysicalDisk(*)\Avg. Disk Queue Length"
-        ) -SampleInterval 1 -MaxSamples 1 -EA Stop
-
-        $physDisks = Get-PhysicalDisk
-        $diskCounters.CounterSamples | Where-Object { $_.InstanceName -ne "_total" } | Group-Object { $_.InstanceName -replace '\s.*','' } | ForEach-Object {
-            $diskName = ($physDisks | Select-Object -First 1).FriendlyName
-            $samples = $_.Group
-            $active = [math]::Round(($samples | Where-Object { $_.Path -match 'disk time' }).CookedValue, 1)
-            $read   = [math]::Round(($samples | Where-Object { $_.Path -match 'read bytes' }).CookedValue / 1MB, 2)
-            $write  = [math]::Round(($samples | Where-Object { $_.Path -match 'write bytes' }).CookedValue / 1MB, 2)
-            $resp   = [math]::Round(($samples | Where-Object { $_.Path -match 'sec/transfer' }).CookedValue * 1000, 1)
-            $queue  = [math]::Round(($samples | Where-Object { $_.Path -match 'queue' }).CookedValue, 2)
-            Write-Host "Disk: $diskName ($($_.Name))"
-            Write-Host "  ────────────────────────────────"
-            Write-Host ("  Active Time     : {0}%" -f $active)
-            Write-Host ("  Read            : {0} MB/s" -f $read)
-            Write-Host ("  Write           : {0} MB/s" -f $write)
-            Write-Host ("  Response Time   : {0} ms" -f $resp)
-            Write-Host ("  Queue Length    : {0}" -f $queue)
-            $diskStatus = if ($active -gt 95) { "[!] HIGH DISK ACTIVITY" } elseif ($resp -gt 100) { "[!] HIGH DISK LATENCY" } else { "[OK] NORMAL" }
-            $diskColor = if ($active -gt 95 -or $resp -gt 100) { 'Yellow' } else { 'Green' }
-            Write-Host "  Status          : $diskStatus" -ForegroundColor $diskColor
-        }
-    } catch {
-        Write-Host "(Khong lay duoc counter disk - thu dung Get-PhysicalDisk)" -ForegroundColor Gray
-        Get-PhysicalDisk | ForEach-Object { Write-Host "  $($_.FriendlyName) | Health: $($_.HealthStatus)" }
-    }
-
-    # --- TEMPERATURE ---
-    Write-Host "`n--- NHIET DO ---" -ForegroundColor Yellow
-    try {
-        $temps = Get-CimInstance -Namespace root\wmi -ClassName MSAcpi_ThermalZoneTemperature -EA Stop
-        $found = $false
-        foreach ($t in $temps) {
-            $c = [math]::Round(($t.CurrentTemperature / 10.0) - 273.15, 1)
-            if ($c -gt 0 -and $c -lt 200) {
-                Write-Host "  $($t.InstanceName) : $c C"
-                $found = $true
-            }
-        }
-        if (-not $found) { Write-Host "  (WMI tra ve gia tri khong hop le - driver khong ho tro)" -ForegroundColor Gray }
-    } catch {
-        Write-Host "  (Khong lay duoc nhiet do qua WMI)" -ForegroundColor Gray
-    }
-    Write-Host "  Goi y: dung HWiNFO64 hoac Open Hardware Monitor de xem nhiet do chi tiet." -ForegroundColor Gray
-
-    Write-Log "Performance Diagnostic"; Pause-Return
-}
 
 function Menu-Cleanup {
     Show-Menu -Title "Windows Cleanup / Don dep Windows" -Options ([ordered]@{
