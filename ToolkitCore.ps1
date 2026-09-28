@@ -367,21 +367,24 @@ function Invoke-PingTool {
 
     $sent = $cnt; $lost = 0; $minMs = -1; $avgMs = -1; $maxMs = -1
     foreach ($line in $pingOut) {
-        if ($line -match "Sent\s*=\s*(\d+)")     { $sent  = [int]$Matches[1] }
-        if ($line -match "Lost\s*=\s*(\d+)")     { $lost  = [int]$Matches[1] }
-        if ($line -match "Minimum\s*=\s*(\d+)")  { $minMs = [int]$Matches[1] }
-        if ($line -match "Maximum\s*=\s*(\d+)")  { $maxMs = [int]$Matches[1] }
-        if ($line -match "Average\s*=\s*(\d+)")  { $avgMs = [int]$Matches[1] }
+        # Hỗ trợ cả Windows EN và VI: Sent/Da gui, Lost/Mat, Minimum/Toi thieu, Maximum/Toi da, Average/Trung binh
+        if ($line -match "(?i)Sent\s*=\s*(\d+)|Da gui\s*=\s*(\d+)")      { $sent  = [int]($Matches[1],$Matches[2]|Where-Object{$_})[0] }
+        if ($line -match "(?i)Lost\s*=\s*(\d+)|Mat\s*=\s*(\d+)")         { $lost  = [int]($Matches[1],$Matches[2]|Where-Object{$_})[0] }
+        if ($line -match "(?i)Minimum\s*=\s*(\d+)|Toi thieu\s*=\s*(\d+)"){ $minMs = [int]($Matches[1],$Matches[2]|Where-Object{$_})[0] }
+        if ($line -match "(?i)Maximum\s*=\s*(\d+)|Toi da\s*=\s*(\d+)")   { $maxMs = [int]($Matches[1],$Matches[2]|Where-Object{$_})[0] }
+        if ($line -match "(?i)Average\s*=\s*(\d+)|Trung binh\s*=\s*(\d+)"){ $avgMs = [int]($Matches[1],$Matches[2]|Where-Object{$_})[0] }
     }
-    # Fallback nếu ping output tiếng Việt
+    # Fallback: parse từng dòng reply (EN: time=21ms / VI: thoi gian=21ms)
     if ($minMs -eq -1) {
-        $times = @($pingOut | ForEach-Object { if ($_ -match "time[<=](\d+)ms") { [int]$Matches[1] } })
+        $times = @($pingOut | ForEach-Object {
+            if ($_ -match "(?i)(?:time|thoi gian)[=<](\d+)ms") { [int]$Matches[1] }
+        } | Where-Object { $_ -ne $null })
         if ($times.Count -gt 0) {
             $minMs = ($times | Measure-Object -Minimum).Minimum
             $maxMs = ($times | Measure-Object -Maximum).Maximum
             $avgMs = [math]::Round(($times | Measure-Object -Average).Average,0)
         }
-        $timedOut = @($pingOut | Where-Object { $_ -match "Request timed out|Yeu cau het thoi gian" }).Count
+        $timedOut = @($pingOut | Where-Object { $_ -match "(?i)timed out|het thoi gian|General failure|unreachable" }).Count
         if ($timedOut -gt 0) { $lost = $timedOut }
     }
 
@@ -1074,9 +1077,9 @@ function Run-FontViet {
 }
 function Menu-OtherSoftware {
     Show-Menu -Title "PHAN MEM KHAC / OTHER SOFTWARE" -Options ([ordered]@{
-        "1"=@{Label="Office AIO 2016-2024  [chua co link - tu nhap]";Action={Open-Site "Office AIO 2016-2024" "" $true}}
-        "2"=@{Label="AutoCAD 2021          [chua co link - tu nhap]";Action={Open-Site "AutoCAD 2021" "" $true}}
-        "3"=@{Label="WinToHDD";Action={Open-Site "WinToHDD" "https://www.easyuefi.com/wintohdd/"}}
+        "1"=@{Label="Office AIO 2016-2024";Action={Open-Site "Office AIO 2016-2024" "https://shrinkme.click/1PyGgj"}}
+        "2"=@{Label="AutoCAD 2021";Action={Open-Site "AutoCAD 2021" "https://shrinkme.click/m7Wrh"}}
+        "3"=@{Label="WinToHDD";Action={Open-Site "WinToHDD" "https://shrinkme.click/YYtjuj"}}
     })
 }
 
@@ -1125,7 +1128,7 @@ function Menu-Software {
         Write-Host "27. Double Driver"
         Write-Host ""
         Write-Host "-- PHAN MEM KHAC / OTHER --" -ForegroundColor Yellow
-        Write-Host "99. Office AIO / AutoCAD / WinToHDD..."
+        Write-Host "99. Office AIO / AutoCAD / WinToHDD"
         Write-Host ""
         Write-Host "0. Back"
         $c = Read-Esc "Chon: "
