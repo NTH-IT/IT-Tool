@@ -29,7 +29,7 @@ try {
 # NHAP LIEU
 # ============================================================
 function Read-Esc {
-    param([string]$Prompt = "", [switch]$Mask)
+    param([string]$Prompt = "")
     if ($Prompt) { Write-Host -NoNewline $Prompt }
     $buf = ""
     while ($true) {
@@ -37,28 +37,10 @@ function Read-Esc {
         if ($k.Key -eq 'Escape') { Write-Host ""; return $Global:ESC }
         if ($k.Key -eq 'Enter') { Write-Host ""; return $buf }
         if ($k.Key -eq 'Backspace') {
-            if ($buf.Length -gt 0) {
-                $buf = $buf.Substring(0, $buf.Length - 1)
-                Write-Host -NoNewline ([char]8 + " " + [char]8)
-            }
+            if ($buf.Length -gt 0) { $buf=$buf.Substring(0,$buf.Length-1); Write-Host -NoNewline ([char]8+" "+[char]8) }
             continue
         }
-        # Hỗ trợ Ctrl+V paste
-        if ($k.Modifiers -band [ConsoleModifiers]::Control -and $k.Key -eq 'V') {
-            try {
-                $clip = Get-Clipboard -Raw -EA Stop
-                if ($clip) {
-                    $clip = $clip -replace "`r|`n", ""
-                    $buf += $clip
-                    Write-Host -NoNewline $(if ($Mask) { "*" * $clip.Length } else { $clip })
-                }
-            } catch {}
-            continue
-        }
-        if (-not [char]::IsControl($k.KeyChar)) {
-            $buf += $k.KeyChar
-            Write-Host -NoNewline $(if ($Mask) { "*" } else { $k.KeyChar })
-        }
+        if (-not [char]::IsControl($k.KeyChar)) { $buf+=$k.KeyChar; Write-Host -NoNewline $k.KeyChar }
     }
 }
 
@@ -212,46 +194,19 @@ function Show-NetworkInfo {
 
 function Set-ComputerNameDomain {
     Clear-Host; Write-Nav; Write-Host "=== DOI TEN MAY / DOMAIN ===" -ForegroundColor Cyan
-    Write-Host "1. Chi doi Hostname"
-    Write-Host "2. Join Domain"
-    Write-Host "3. Doi Workgroup"
-    Write-Host "0. Quay lai"
-    $c = Read-Esc "Chon: "
-    if ($c -eq $Global:ESC -or $c -eq "0") { return }
-
-    switch ($c) {
-        "1" {
-            $newName = Read-Esc "Hostname moi (ESC huy): "
-            if ($newName -eq $Global:ESC -or $newName -eq "") { return }
-            if (-not (Confirm-Action "Doi hostname can KHOI DONG LAI may.")) { return }
-            Rename-Computer -NewName $newName -Force
-            Write-Log "Doi hostname: $newName"
-            Write-Host "Hoan tat. Vui long khoi dong lai may." -ForegroundColor Green
-        }
-        "2" {
-            $dom = Read-Esc "Domain (vd: company.local, ESC huy): "
-            if ($dom -eq $Global:ESC -or $dom -eq "") { return }
-            $cred = Get-Credential -Message "Tai khoan join domain"
-            if (-not $cred) { return }
-            if (-not (Confirm-Action "Join domain '$dom'? Can KHOI DONG LAI may.")) { return }
-            try {
-                Add-Computer -DomainName $dom -Credential $cred -Force -EA Stop
-                Write-Log "Join domain: $dom"
-                Write-Host "Join domain thanh cong. Khoi dong lai may." -ForegroundColor Green
-            } catch {
-                Write-Host "Join domain THAT BAI: $_" -ForegroundColor Red
-            }
-        }
-        "3" {
-            $wg = Read-Esc "Workgroup moi (ESC huy): "
-            if ($wg -eq $Global:ESC -or $wg -eq "") { return }
-            if (-not (Confirm-Action "Doi workgroup sang '$wg'? Can KHOI DONG LAI may.")) { return }
-            Add-Computer -WorkgroupName $wg -Force
-            Write-Log "Doi workgroup: $wg"
-            Write-Host "Hoan tat. Khoi dong lai may." -ForegroundColor Green
-        }
+    $newName = Read-Esc "Hostname moi (Enter bo qua, ESC huy): "
+    if ($newName -eq $Global:ESC) { return }
+    $newDom = Read-Esc "Domain/Workgroup moi (Enter bo qua, ESC huy): "
+    if ($newDom -eq $Global:ESC) { return }
+    if ($newName -eq "" -and $newDom -eq "") { return }
+    if (-not (Confirm-Action "Doi ten may/domain can KHOI DONG LAI may.")) { return }
+    if ($newName -ne "") { Rename-Computer -NewName $newName -Force; Write-Log "Doi hostname: $newName" }
+    if ($newDom -ne "") {
+        $cred = Get-Credential -Message "Tai khoan join domain (bo qua neu doi workgroup)"
+        try { Add-Computer -DomainName $newDom -Credential $cred -Force; Write-Log "Join domain: $newDom" }
+        catch { Add-Computer -WorkgroupName $newDom -Force; Write-Log "Doi workgroup: $newDom" }
     }
-    Pause-Return
+    Write-Host "Hoan tat. Vui long khoi dong lai may." -ForegroundColor Green; Pause-Return
 }
 
 function Reset-IPAddress {
@@ -387,7 +342,7 @@ function Invoke-QuickNetworkTest {
     $ok5 = $null -ne $r5
     Write-Host ("[{0}] Internet   : {1}" -f $(if($ok5){"OK"}else{"X"}), $(if($ok5){"8.8.8.8 → Reachable ($($r5.ResponseTime)ms)"}else{"KHONG KET NOI INTERNET"})) -ForegroundColor $(if($ok5){'Green'}else{'Red'})
 
-    Write-Host ""; Write-Host ("-"*48) -ForegroundColor Cyan
+    Write-Host ""; Write-Host ("─"*48) -ForegroundColor Cyan
     $allOk = $ok1 -and $ok2 -and $ok4 -and $ok5
     if ($allOk) { Write-Host "  Ket qua : TAT CA BINH THUONG" -ForegroundColor Green }
     else        { Write-Host "  Ket qua : CO LOI - Xem huong dan tren" -ForegroundColor Red }
@@ -400,91 +355,83 @@ function Invoke-PingTool {
     Write-Host ""
     $target = Read-Esc "Nhap target (IP hoac domain): "
     if ($target -eq $Global:ESC -or $target -eq "") { return }
-    $target = $target.Trim()
-
-    # Phân loại target để chọn ngưỡng phù hợp
-    $isLan = $target -match '^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|localhost$)' `
-             -or $target -match '^\d+\.\d+\.\d+\.\d+$' -and (
-                 [System.Net.IPAddress]::TryParse($target, [ref]$null) -and
-                 ([System.Net.IPAddress]::Parse($target).GetAddressBytes()[0] -in 10,127,192) -or
-                 ([System.Net.IPAddress]::Parse($target).GetAddressBytes()[0] -eq 172 -and
-                  [System.Net.IPAddress]::Parse($target).GetAddressBytes()[1] -ge 16 -and
-                  [System.Net.IPAddress]::Parse($target).GetAddressBytes()[1] -le 31)
-             )
-
     $cntStr = Read-Esc "So goi (mac dinh 10, Enter = 10): "
     if ($cntStr -eq $Global:ESC) { return }
-    [int]$cnt = if ($cntStr -match "^\d+$" -and [int]$cntStr -gt 0 -and [int]$cntStr -le 200) { [int]$cntStr } else { 10 }
+    [int]$cnt = if ($cntStr -match "^\d+$" -and [int]$cntStr -gt 0) { [int]$cntStr } else { 10 }
+
+    # Phat hien LAN hay WAN de chon nguong danh gia
+    $isLAN = $target -match "^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)|^localhost$|^127\." `
+             -or ($target -notmatch "^\d{1,3}\." -and -not ($target -contains "."))
 
     Clear-Host; Write-Nav; Write-Host "=== PING ===" -ForegroundColor Cyan
-    Write-Host "Target : $target $(if($isLan){'(LAN)'}else{'(Internet/WAN)'})"
+    $netType = if ($isLAN) { "LAN" } else { "WAN/Internet" }
+    Write-Host "Target : $target  [$netType]"
     Write-Host "Count  : $cnt"; Write-Host ""
 
-    $pingOut = @(& ping.exe -n $cnt $target 2>$null | ForEach-Object { Write-Host $_; $_ })
+    # Chay ping.exe va hien thi real-time, dong thoi thu thap output de parse
+    $pingOut = & ping.exe -n $cnt $target | ForEach-Object { Write-Host $_; $_ }
 
-    # Parse chính xác: ưu tiên dòng summary, fallback từng reply
+    # ── Parse summary: dung alternation 1 group ── (tranh loi $Matches[2] empty-string)
     $sent = $cnt; $lost = 0; $minMs = -1; $avgMs = -1; $maxMs = -1
-    $times = @()
+    $times = [System.Collections.Generic.List[int]]::new()
+
     foreach ($line in $pingOut) {
-        if ($line -match "(?i)(?:time|thoi gian)[=<]\s*(\d+)\s*ms") { $times += [int]$Matches[1] }
-        # Summary EN
-        if ($line -match "(?i)Sent\s*=\s*(\d+).*?Lost\s*=\s*(\d+)")  { $sent=[int]$Matches[1]; $lost=[int]$Matches[2] }
-        if ($line -match "(?i)Minimum\s*=\s*(\d+)ms.*?Maximum\s*=\s*(\d+)ms.*?Average\s*=\s*(\d+)ms") {
-            $minMs=[int]$Matches[1]; $maxMs=[int]$Matches[2]; $avgMs=[int]$Matches[3] }
-        # Summary VI
-        if ($line -match "(?i)Da gui\s*=\s*(\d+).*?Mat\s*=\s*(\d+)") { $sent=[int]$Matches[1]; $lost=[int]$Matches[2] }
-        if ($line -match "(?i)Toi thieu\s*=\s*(\d+)ms.*?Toi da\s*=\s*(\d+)ms.*?Trung binh\s*=\s*(\d+)ms") {
-            $minMs=[int]$Matches[1]; $maxMs=[int]$Matches[2]; $avgMs=[int]$Matches[3] }
+        # Summary lines: EN "Sent = 10" / VI "Da gui = 10" etc.
+        if ($line -match "(?i)(?:Sent|Da\s*gui)\s*=\s*(\d+)")         { $sent  = [int]$Matches[1] }
+        if ($line -match "(?i)(?:Lost|Mat)\s*=\s*(\d+)")              { $lost  = [int]$Matches[1] }
+        if ($line -match "(?i)(?:Minimum|Toi\s*thieu)\s*=\s*(\d+)")  { $minMs = [int]$Matches[1] }
+        if ($line -match "(?i)(?:Maximum|Toi\s*da)\s*=\s*(\d+)")     { $maxMs = [int]$Matches[1] }
+        if ($line -match "(?i)(?:Average|Trung\s*binh)\s*=\s*(\d+)") { $avgMs = [int]$Matches[1] }
+        # Per-reply RTT: EN "time=21ms" "time<1ms" / VI "thoi gian=21ms"
+        if ($line -match "(?i)(?:time|thoi\s*gian)[=<](\d+)ms")        { $times.Add([int]$Matches[1]) }
     }
-    if ($times.Count -gt 0 -and $minMs -eq -1) {
+
+    # Fallback tinh tay neu OS khong co summary theo mau chuan
+    if ($minMs -eq -1 -and $times.Count -gt 0) {
         $minMs = ($times | Measure-Object -Minimum).Minimum
         $maxMs = ($times | Measure-Object -Maximum).Maximum
         $avgMs = [math]::Round(($times | Measure-Object -Average).Average, 0)
     }
-    if ($lost -eq 0) {
-        $timeoutCount = @($pingOut | Where-Object { $_ -match "(?i)timed out|het thoi gian|General failure|unreachable|khong the truy cap" }).Count
-        if ($timeoutCount -gt 0) { $lost = $timeoutCount }
-    }
+    if ($sent -eq 0) { $sent = $cnt }
+    $lostPct = [math]::Round($lost / $sent * 100, 1)
 
-    $lostPct = if ($sent -gt 0) { [math]::Round($lost / $sent * 100, 0) } else { 100 }
-    Write-Host ""; Write-Host ("-" * 38) -ForegroundColor Cyan
-    Write-Host ("Packets   : $sent sent, $lost lost")
-    Write-Host ("Loss      : $lostPct%")
+    # ── Summary display ──
+    Write-Host ""; Write-Host ("─"*42) -ForegroundColor Cyan
+    Write-Host ("Packets   : $sent sent")
+    Write-Host ("Lost      : $lost ($lostPct%)")
     if ($minMs -ge 0) {
-        Write-Host ("Min/Avg/Max: $minMs / $avgMs / $maxMs ms")
+        Write-Host ("Min       : $minMs ms")
+        Write-Host ("Avg       : $avgMs ms")
+        Write-Host ("Max       : $maxMs ms")
     }
     Write-Host ""
 
-    # Rating linh hoạt: 2 mức GOOD/POOR dựa trên loss + latency tương đối
+    # ── Rating dong theo LAN / WAN ──
+    $effAvg = if ($avgMs -ge 0) { $avgMs } else { 9999 }
     $ratingText, $ratingColor =
-        if ($lostPct -eq 0 -and $avgMs -ge 0) {
-            if ($isLan) {
-                if ($avgMs -le 5)   { "[OK] GOOD - LAN on dinh", "Green" }
-                elseif ($avgMs -le 20) { "[!] FAIR - LAN hoi cao", "Yellow" }
-                else                { "[X] POOR - LAN bat thuong", "Red" }
-            } else {
-                if ($avgMs -lt 150)  { "[OK] GOOD - Internet on dinh", "Green" }
-                elseif ($avgMs -lt 300){ "[!] FAIR - Internet hoi lag", "Yellow" }
-                else                 { "[X] POOR - Internet cham", "Red" }
-            }
-        } elseif ($lostPct -lt 5) { "[!] FAIR - Co mat goi nhe", "Yellow" }
-        else                       { "[X] POOR - Mat nhieu goi (>5%)", "Red" }
-
+        if ($isLAN) {
+            if ($lostPct -eq 0 -and $effAvg -le 5)        { "[OK] GOOD  - LAN on dinh (avg ${effAvg}ms)",          "Green"  }
+            elseif ($lostPct -lt 5 -and $effAvg -le 50)   { "[!] FAIR  - LAN co van de nhe (loss=$lostPct%)",       "Yellow" }
+            else                                            { "[X] POOR  - LAN gap su co nghiem trong",              "Red"    }
+        } else {
+            if ($lostPct -lt 2 -and $effAvg -le 150)      { "[OK] GOOD  - Ket noi on dinh (avg ${effAvg}ms)",       "Green"  }
+            elseif ($lostPct -lt 10 -and $effAvg -le 300) { "[!] FAIR  - Co the lag (loss=$lostPct% avg=${effAvg}ms)", "Yellow" }
+            else                                            { "[X] POOR  - Ket noi yeu hoac mat goi nhieu",          "Red"    }
+        }
     Write-Host $ratingText -ForegroundColor $ratingColor
-    Write-Log "Ping $target x$cnt -> Sent=$sent Lost=$lostPct% Avg=${avgMs}ms"
+    Write-Log "Ping $target x$cnt [$netType] → Loss=$lostPct% Avg=${avgMs}ms"
     Pause-Return
 }
 
+
 function Invoke-NetworkQuality {
     Clear-Host; Write-Nav; Write-Host "=== NETWORK QUALITY (60 giay) ===" -ForegroundColor Cyan
-    Write-Host "Ping xen ke 8.8.8.8 va 1.1.1.1 trong 60s + Speed Test..." -ForegroundColor Gray
+    Write-Host "Ping xen ke 8.8.8.8 va 1.1.1.1 trong 60 giay + Speed Test..." -ForegroundColor Gray
     Write-Host ""
-
-    $targets   = @("8.8.8.8", "1.1.1.1")
+    $targets   = @("8.8.8.8","1.1.1.1")
     $latencies = [System.Collections.Generic.List[int]]::new()
     $jitters   = [System.Collections.Generic.List[double]]::new()
-    $lost = 0; $total = 0; $prevMs = -1; $ti = 0
-    $duration = 60
+    $lost = 0; $total = 0; $prevMs = -1; $ti = 0; $duration = 60
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
     while ($sw.Elapsed.TotalSeconds -lt $duration) {
@@ -504,48 +451,56 @@ function Invoke-NetworkQuality {
             $lost++
             Write-Host -NoNewline "`r  [$bar] $pct%  $total goi  ${tgt}: TIMEOUT    "
         }
-        Start-Sleep -Milliseconds 600
+        Start-Sleep -Milliseconds 700
     }
     Write-Host ""; Write-Host ""
 
-    # Speed test (Cloudflare 5MB)
+    # Speed test
     Write-Host "Dang do toc do download (Cloudflare 5MB)..." -ForegroundColor Yellow
     $dlMbps = -1
     try {
         $dlSw = [System.Diagnostics.Stopwatch]::StartNew()
-        $wc2 = New-Object System.Net.WebClient
-        $wc2.Headers.Add("User-Agent", "Mozilla/5.0")
-        $wc2.Proxy = [System.Net.WebRequest]::DefaultWebProxy
+        $wc2  = New-Object System.Net.WebClient
+        $wc2.Headers.Add("User-Agent","Mozilla/5.0")
         $data = $wc2.DownloadData("https://speed.cloudflare.com/__down?bytes=5000000")
         $dlSw.Stop()
-        if ($data.Length -gt 0) { $dlMbps = [math]::Round(($data.Length / 1MB) / $dlSw.Elapsed.TotalSeconds, 2) }
+        if ($data.Length -gt 0) { $dlMbps = [math]::Round(($data.Length/1MB)/$dlSw.Elapsed.TotalSeconds,2) }
     } catch {}
 
-    $lossPct   = if ($total -gt 0) { [math]::Round($lost / $total * 100, 1) } else { 100 }
-    $avgLat    = if ($latencies.Count -gt 0) { [math]::Round(($latencies | Measure-Object -Average).Average, 1) } else { 999 }
-    $minLat    = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Minimum).Minimum } else { 0 }
-    $maxLat    = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Maximum).Maximum } else { 0 }
-    $avgJitter = if ($jitters.Count -gt 0)   { [math]::Round(($jitters | Measure-Object -Average).Average, 1) } else { 0 }
+    # Ket qua
+    $lossPct   = if ($total -gt 0) { [math]::Round($lost/$total*100,1) } else { 100 }
+    $avgLat    = if ($latencies.Count -gt 0) { [math]::Round(($latencies|Measure-Object -Average).Average,1) } else { 999 }
+    $minLat    = if ($latencies.Count -gt 0) { ($latencies|Measure-Object -Minimum).Minimum } else { 0 }
+    $maxLat    = if ($latencies.Count -gt 0) { ($latencies|Measure-Object -Maximum).Maximum } else { 0 }
+    $avgJitter = if ($jitters.Count -gt 0)   { [math]::Round(($jitters|Measure-Object -Average).Average,1) } else { 0 }
 
     Write-Host "=== KET QUA ===" -ForegroundColor Cyan
     Write-Host ("  Latency (Avg)  : {0,8} ms" -f $avgLat)
-    Write-Host ("  Packet Loss    : {0,8} %" -f $lossPct)
+    Write-Host ("  Packet Loss    : {0,8} %"  -f $lossPct)
     Write-Host ("  Jitter         : {0,8} ms" -f $avgJitter)
-    Write-Host ("  Min / Max      : {0} / {1} ms" -f $minLat, $maxLat)
+    Write-Host ("  Min            : {0,8} ms" -f $minLat)
+    Write-Host ("  Max            : {0,8} ms" -f $maxLat)
     if ($dlMbps -gt 0) { Write-Host ("  Download Speed : {0,6} MB/s" -f $dlMbps) -ForegroundColor Cyan }
     else               { Write-Host "  Download Speed : (Khong do duoc)" -ForegroundColor Gray }
     Write-Host ""
 
-    # Rating linh hoạt: GOOD nếu loss thấp + jitter thấp + latency chấp nhận được
-    # Target 8.8.8.8/1.1.1.1 từ VN thường 20-80ms → không dùng ngưỡng tuyệt đối cứng
+    # Rating theo thuc te mang Viet Nam (target la 8.8.8.8/1.1.1.1 = WAN quoc te)
+    # FPT/Viettel/VNPT binh thuong: 40-90ms toi 8.8.8.8, nen nguong EXCELLENT la <60ms
     $ratingText, $ratingColor =
-        if ($lossPct -eq 0 -and $avgJitter -lt 15 -and $avgLat -lt 150)      { "[OK] GOOD - On dinh (gaming/call OK)", "Green" }
-        elseif ($lossPct -lt 2 -and $avgJitter -lt 40 -and $avgLat -lt 250)  { "[!] FAIR - Co lag nhe", "Yellow" }
-        else                                                                  { "[X] POOR - Ket noi yeu/khong on dinh", "Red" }
+        if    ($avgLat -lt 60  -and $lossPct -eq 0 -and $avgJitter -lt 10) {
+            "[OK] EXCELLENT - Rat tot (gaming / video call 4K)",             "Green" }
+        elseif($avgLat -lt 120 -and $lossPct -lt 1 -and $avgJitter -lt 25) {
+            "[OK] GOOD      - On dinh, dung cho streaming va lam viec",      "Green" }
+        elseif($avgLat -lt 200 -and $lossPct -lt 5) {
+            "[!] FAIR       - Co the lag nhe, nen kiem tra lai router/ISP",  "Yellow" }
+        else {
+            "[X] POOR       - Ket noi yeu, nhieu mat goi hoac do tre cao",   "Red"   }
+
     Write-Host $ratingText -ForegroundColor $ratingColor
-    Write-Log "Network Quality: Lat=${avgLat}ms Loss=${lossPct}% Jitter=${avgJitter}ms DL=${dlMbps}MB/s"
+    Write-Log "NetworkQuality: Lat=${avgLat}ms Loss=${lossPct}% Jitter=${avgJitter}ms DL=${dlMbps}MB/s"
     Pause-Return
 }
+
 
 function Menu-Network {
     Show-Menu -Title "1. NETWORK TROUBLESHOOT" -NavEntry "1" -Options ([ordered]@{
@@ -556,7 +511,7 @@ function Menu-Network {
         "5"=@{Label="Dat DNS tinh";Action={Set-StaticDNS}}
         "6"=@{Label="Reset mang (chon Interface / ALL)";Action={Reset-NetworkFull}}
         "7"=@{Label="Quick Network Test";Action={Invoke-QuickNetworkTest}}
-        "8"=@{Label="Ping ";Action={Invoke-PingTool}}
+        "8"=@{Label="Ping";Action={Invoke-PingTool}}
         "9"=@{Label="Network Quality (60s + Speed Test)";Action={Invoke-NetworkQuality}}
     })
 }
@@ -782,99 +737,70 @@ function Get-FolderSizeMB { param([string]$P); if(-not(Test-Path $P)){return 0};
 
 function Invoke-CleanupFlow {
     param([bool]$Deep)
-    Clear-Host; Write-Nav
-    Write-Host "=== CLEANUP ANALYSIS ===" -ForegroundColor Cyan
-    Write-Host "Dang quet..." -ForegroundColor Gray
-    Write-Host ""
-
-    $total = [double]0
-    function Write-ItemRow([string]$Name,[double]$Sz) {
-        $script:total += $Sz
-        Write-Host ("{0,-24} {1,8:F1} MB" -f $Name, $Sz)
+    $quickFolders = [ordered]@{
+        "User Temp"         = "$env:TEMP"
+        "Windows Temp"      = "$env:windir\Temp"
+        "Windows Update DL" = "$env:windir\SoftwareDistribution\Download"
+        "Error Reports"     = "$env:LOCALAPPDATA\Microsoft\Windows\WER"
+        "Chrome Cache"      = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache"
+        "Edge Cache"        = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache"
     }
-
-    # ── QUICK items ──
-    Write-Host "--- DON QUA ---" -ForegroundColor Yellow
-    Write-ItemRow "User Temp"        (Get-FolderSizeMB $env:TEMP)
-    Write-ItemRow "Windows Temp"     (Get-FolderSizeMB "$env:windir\Temp")
-    Write-ItemRow "Windows Update"   (Get-FolderSizeMB "$env:windir\SoftwareDistribution\Download")
-    Write-ItemRow "Error Reports"    (Get-FolderSizeMB "$env:LOCALAPPDATA\Microsoft\Windows\WER")
-    $bsz = 0
-    foreach ($bp in @(
-        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache",
-        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Code Cache",
-        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache",
-        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Code Cache")) { $bsz += Get-FolderSizeMB $bp }
-    try {
-        Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory -EA Stop | ForEach-Object {
-            $bsz += Get-FolderSizeMB "$($_.FullName)\cache2" }
-    } catch {}
-    Write-ItemRow "Browser Cache"    $bsz
-    $thumbSz = [math]::Round((Get-ChildItem "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache_*.db" -EA SilentlyContinue | Measure-Object Length -Sum).Sum/1MB,1)
-    Write-ItemRow "Thumbnail Cache"  $thumbSz
-    Write-ItemRow "D3D Shader Cache" (Get-FolderSizeMB "$env:LOCALAPPDATA\D3DSCache")
-    Write-ItemRow "DNS Cache"        0
-
-    # ── DEEP items ──
+    $deepExtra = [ordered]@{
+        "UWP Packages" = "$env:LOCALAPPDATA\Packages"
+        "LocalLow"     = "$env:USERPROFILE\AppData\LocalLow"
+        "Prefetch"     = "$env:windir\Prefetch"
+        "Minidump"     = "$env:windir\Minidump"
+    }
+    Clear-Host; Write-Nav; Write-Host "=== CLEANUP ANALYSIS ===" -ForegroundColor Cyan
+    $total = 0
+    foreach ($k in $quickFolders.Keys) {
+        $sz = Get-FolderSizeMB $quickFolders[$k]; $total += $sz
+        Write-Host ("{0,-24} {1,8:F2} MB" -f $k, $sz)
+    }
+    $ffProfiles = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory -EA SilentlyContinue
+    $ffSize = 0
+    if ($ffProfiles) { $ffProfiles | ForEach-Object { $ffSize += Get-FolderSizeMB "$($_.FullName)\cache2" } }
+    if ($ffSize -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Firefox Cache", $ffSize); $total += $ffSize }
+    $thumbDir   = "$env:LOCALAPPDATA\Microsoft\Windows\Explorer"
+    $thumbFiles = @(Get-Item "$thumbDir\thumbcache_*.db","$thumbDir\iconcache_*.db" -EA SilentlyContinue)
+    $thumbMB    = [math]::Round(($thumbFiles | Measure-Object -Property Length -Sum).Sum / 1MB, 2)
+    if ($thumbMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Thumbnail Cache", $thumbMB); $total += $thumbMB }
     if ($Deep) {
-        Write-Host ""
-        Write-Host "--- DON KY (them) ---" -ForegroundColor Yellow
-        Write-ItemRow "Recycle Bin"  (Get-FolderSizeMB "$env:SystemDrive\`$Recycle.Bin")
-        Write-ItemRow "UWP Packages" (Get-FolderSizeMB "$env:LOCALAPPDATA\Packages")
-        Write-ItemRow "LocalLow"     (Get-FolderSizeMB "$env:USERPROFILE\AppData\LocalLow")
-        Write-ItemRow "SRU Database" (Get-FolderSizeMB "$env:windir\System32\sru")
-        $dSz = 0
-        if (Test-Path "$env:windir\MEMORY.DMP") { $dSz += [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length/1MB,1) }
-        $dSz += Get-FolderSizeMB "$env:windir\Minidump"
-        Write-ItemRow "Memory Dumps" $dSz
-        Write-ItemRow "Prefetch"     (Get-FolderSizeMB "$env:windir\Prefetch")
-        $evSz = 0
-        try { $evSz = [math]::Round((Get-WinEvent -ListLog * -EA Stop | Where-Object FileSize | Measure-Object FileSize -Sum).Sum/1MB,1) } catch {}
-        Write-ItemRow "Event Logs"   $evSz
+        foreach ($k in $deepExtra.Keys) {
+            $sz = Get-FolderSizeMB $deepExtra[$k]; $total += $sz
+            Write-Host ("{0,-24} {1,8:F2} MB" -f $k, $sz)
+        }
+        $rbMB = Get-FolderSizeMB "$env:SystemDrive\`$Recycle.Bin"
+        Write-Host ("{0,-24} {1,8:F2} MB" -f "Recycle Bin", $rbMB); $total += $rbMB
+        $dumpMB = 0
+        if (Test-Path "$env:windir\MEMORY.DMP") { $dumpMB = [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length/1MB,2) }
+        if ($dumpMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Memory Dump", $dumpMB); $total += $dumpMB }
     }
-
-    Write-Host ("─"*34) -ForegroundColor Cyan
-    Write-Host ("{0,-24} {1,8:F1} MB" -f "Potentially removable", $total) -ForegroundColor Yellow
-
-    $ch = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
-    if ($ch -eq $Global:ESC -or $ch.ToUpper() -ne "Y") { Pause-Return; return }
-
-    # ── Thực hiện xóa Quick ──
-    foreach ($p in @(
-        "$env:TEMP",
-        "$env:windir\Temp",
-        "$env:windir\SoftwareDistribution\Download",
-        "$env:LOCALAPPDATA\Microsoft\Windows\WER",
-        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Cache",
-        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Code Cache",
-        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Cache",
-        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Code Cache",
-        "$env:LOCALAPPDATA\D3DSCache")) {
-        if (Test-Path $p) { Remove-Item "$p\*" -Recurse -Force -EA SilentlyContinue }
+    Write-Host ("─"*34)
+    Write-Host ("{0,-24} {1,8:F2} MB" -f "Potentially removable", [math]::Round($total,2)) -ForegroundColor Yellow
+    $ans = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
+    if ($ans -eq $Global:ESC -or $ans.ToUpper() -ne "Y") { Pause-Return; return }
+    Write-Host "`nDang don dep..." -ForegroundColor Cyan
+    foreach ($k in $quickFolders.Keys) {
+        Remove-Item "$($quickFolders[$k])\*" -Recurse -Force -EA SilentlyContinue
     }
-    try {
-        Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory -EA Stop | ForEach-Object {
-            Remove-Item "$($_.FullName)\cache2\*" -Recurse -Force -EA SilentlyContinue }
-    } catch {}
-    Remove-Item "$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache_*.db" -Force -EA SilentlyContinue
+    if ($ffProfiles) { $ffProfiles | ForEach-Object { Remove-Item "$($_.FullName)\cache2\*" -Recurse -Force -EA SilentlyContinue } }
+    $thumbFiles | ForEach-Object { Remove-Item $_.FullName -Force -EA SilentlyContinue }
     ipconfig /flushdns | Out-Null
-
-    # ── Thực hiện xóa Deep ──
     if ($Deep) {
+        foreach ($k in $deepExtra.Keys) { Remove-Item "$($deepExtra[$k])\*" -Recurse -Force -EA SilentlyContinue }
         Clear-RecycleBin -Force -EA SilentlyContinue
-        Remove-Item "$env:LOCALAPPDATA\Packages\*"        -Recurse -Force -EA SilentlyContinue
-        Remove-Item "$env:USERPROFILE\AppData\LocalLow\*" -Recurse -Force -EA SilentlyContinue
-        Stop-Service DPS -Force -EA SilentlyContinue
+        Remove-Item "$env:windir\MEMORY.DMP" -Force -EA SilentlyContinue
+        Stop-Service -Name DPS -Force -EA SilentlyContinue
         Remove-Item "$env:windir\System32\sru\*" -Force -EA SilentlyContinue
-        Start-Service DPS -EA SilentlyContinue
-        Remove-Item "$env:windir\MEMORY.DMP"        -Force -EA SilentlyContinue
-        Remove-Item "$env:windir\Minidump\*" -Recurse -Force -EA SilentlyContinue
-        Remove-Item "$env:windir\Prefetch\*"        -Force -EA SilentlyContinue
+        Start-Service -Name DPS -EA SilentlyContinue
         wevtutil el | ForEach-Object { wevtutil cl "$_" 2>$null }
     }
-
-    Write-Log "$(if($Deep){'Deep'}else{'Quick'}) Clean - pre-scan ~$([math]::Round($total,1)) MB"
-    Write-Host "`nDa don xong. Da giai phong uoc tinh: ~$([math]::Round($total,1)) MB" -ForegroundColor Green
+    $after = 0
+    foreach ($k in $quickFolders.Keys) { $after += Get-FolderSizeMB $quickFolders[$k] }
+    $freed = [math]::Round($total - $after, 2)
+    Write-Log "$(if($Deep){'Deep'}else{'Quick'}) Clean - freed ~$freed MB"
+    Write-Host "`nDa don xong. Da giai phong khoang: $freed MB" -ForegroundColor Green
     Pause-Return
 }
 
@@ -1218,10 +1144,6 @@ function Menu-Software {
             "26" { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" }
             "27" { Open-Site "Double Driver"             "https://download.com.vn/double-driver-25157" }
             "99" { Menu-OtherSoftware }
-            default {
-                Write-Host "Lua chon khong hop le. Nhap lai." -ForegroundColor Red
-                Start-Sleep -Milliseconds 800
-            }
         }
         if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
     } while ($true)
