@@ -29,7 +29,7 @@ try {
 # NHAP LIEU
 # ============================================================
 function Read-Esc {
-    param([string]$Prompt = "")
+    param([string]$Prompt = "", [switch]$Mask)
     if ($Prompt) { Write-Host -NoNewline $Prompt }
     $buf = ""
     while ($true) {
@@ -37,10 +37,28 @@ function Read-Esc {
         if ($k.Key -eq 'Escape') { Write-Host ""; return $Global:ESC }
         if ($k.Key -eq 'Enter') { Write-Host ""; return $buf }
         if ($k.Key -eq 'Backspace') {
-            if ($buf.Length -gt 0) { $buf=$buf.Substring(0,$buf.Length-1); Write-Host -NoNewline ([char]8+" "+[char]8) }
+            if ($buf.Length -gt 0) {
+                $buf = $buf.Substring(0, $buf.Length - 1)
+                Write-Host -NoNewline ([char]8 + " " + [char]8)
+            }
             continue
         }
-        if (-not [char]::IsControl($k.KeyChar)) { $buf+=$k.KeyChar; Write-Host -NoNewline $k.KeyChar }
+        # Hỗ trợ Ctrl+V paste
+        if ($k.Modifiers -band [ConsoleModifiers]::Control -and $k.Key -eq 'V') {
+            try {
+                $clip = Get-Clipboard -Raw -EA Stop
+                if ($clip) {
+                    $clip = $clip -replace "`r|`n", ""
+                    $buf += $clip
+                    Write-Host -NoNewline $(if ($Mask) { "*" * $clip.Length } else { $clip })
+                }
+            } catch {}
+            continue
+        }
+        if (-not [char]::IsControl($k.KeyChar)) {
+            $buf += $k.KeyChar
+            Write-Host -NoNewline $(if ($Mask) { "*" } else { $k.KeyChar })
+        }
     }
 }
 
