@@ -387,7 +387,7 @@ function Invoke-QuickNetworkTest {
     $ok5 = $null -ne $r5
     Write-Host ("[{0}] Internet   : {1}" -f $(if($ok5){"OK"}else{"X"}), $(if($ok5){"8.8.8.8 → Reachable ($($r5.ResponseTime)ms)"}else{"KHONG KET NOI INTERNET"})) -ForegroundColor $(if($ok5){'Green'}else{'Red'})
 
-    Write-Host ""; Write-Host ("─"*48) -ForegroundColor Cyan
+    Write-Host ""; Write-Host ("-"*48) -ForegroundColor Cyan
     $allOk = $ok1 -and $ok2 -and $ok4 -and $ok5
     if ($allOk) { Write-Host "  Ket qua : TAT CA BINH THUONG" -ForegroundColor Green }
     else        { Write-Host "  Ket qua : CO LOI - Xem huong dan tren" -ForegroundColor Red }
