@@ -327,7 +327,7 @@ function Invoke-QuickNetworkTest {
     if ($adGW) {
         $r = Test-Connection -ComputerName $adGW -Count 1 -EA SilentlyContinue
         $ok3 = $null -ne $r; $gwMs = if($ok3){$r.ResponseTime}else{0}
-        Write-Host ("[{0}] Gateway    : {1} {2}" -f $(if($ok3){"OK"}else{"X"}), $adGW, $(if($ok3){"→ Ping ${gwMs}ms"}else{"→ KHONG PING DUOC"})) -ForegroundColor $(if($ok3){'Green'}else{'Yellow'})
+        Write-Host ("[{0}] Gateway    : {1} {2}" -f $(if($ok3){"OK"}else{"X"}), $adGW, $(if($ok3){"-> Ping ${gwMs}ms"}else{"-> KHONG PING DUOC"})) -ForegroundColor $(if($ok3){'Green'}else{'Yellow'})
     } else {
         Write-Host "[!] Gateway    : Khong co Gateway" -ForegroundColor Yellow
     }
@@ -335,14 +335,14 @@ function Invoke-QuickNetworkTest {
     # 4. DNS
     $ok4 = $false; $dnsIp = ""
     try { $r4=[System.Net.Dns]::GetHostAddresses("google.com"); $ok4=$r4.Count-gt 0; $dnsIp=$r4[0].IPAddressToString } catch {}
-    Write-Host ("[{0}] DNS        : {1}" -f $(if($ok4){"OK"}else{"X"}), $(if($ok4){"Resolve google.com → $dnsIp"}else{"KHONG RESOLVE DUOC → kiem tra DNS"})) -ForegroundColor $(if($ok4){'Green'}else{'Red'})
+    Write-Host ("[{0}] DNS        : {1}" -f $(if($ok4){"OK"}else{"X"}), $(if($ok4){"Resolve google.com -> $dnsIp"}else{"KHONG RESOLVE DUOC -> kiem tra DNS"})) -ForegroundColor $(if($ok4){'Green'}else{'Red'})
 
     # 5. Internet
     $r5 = Test-Connection -ComputerName "8.8.8.8" -Count 1 -EA SilentlyContinue
     $ok5 = $null -ne $r5
-    Write-Host ("[{0}] Internet   : {1}" -f $(if($ok5){"OK"}else{"X"}), $(if($ok5){"8.8.8.8 → Reachable ($($r5.ResponseTime)ms)"}else{"KHONG KET NOI INTERNET"})) -ForegroundColor $(if($ok5){'Green'}else{'Red'})
+    Write-Host ("[{0}] Internet   : {1}" -f $(if($ok5){"OK"}else{"X"}), $(if($ok5){"8.8.8.8 -> Reachable ($($r5.ResponseTime)ms)"}else{"KHONG KET NOI INTERNET"})) -ForegroundColor $(if($ok5){'Green'}else{'Red'})
 
-    Write-Host ""; Write-Host ("─"*48) -ForegroundColor Cyan
+    Write-Host ""; Write-Host ("-"*48) -ForegroundColor Cyan
     $allOk = $ok1 -and $ok2 -and $ok4 -and $ok5
     if ($allOk) { Write-Host "  Ket qua : TAT CA BINH THUONG" -ForegroundColor Green }
     else        { Write-Host "  Ket qua : CO LOI - Xem huong dan tren" -ForegroundColor Red }
@@ -360,45 +360,63 @@ function Invoke-PingTool {
     [int]$cnt = if ($cntStr -match "^\d+$" -and [int]$cntStr -gt 0) { [int]$cntStr } else { 10 }
 
     # Phat hien LAN hay WAN de chon nguong danh gia
-    $isLAN = $target -match "^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)|^localhost$|^127\." `
-             -or ($target -notmatch "^\d{1,3}\." -and -not ($target -contains "."))
+    $isLAN = ($target -match "^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)|^localhost$|^127\.") `
+             -or ($target -match "^[a-zA-Z0-9_-]+$")   # hostname don gian (khong co dau .) = LAN
 
     Clear-Host; Write-Nav; Write-Host "=== PING ===" -ForegroundColor Cyan
-    $netType = if ($isLAN) { "LAN" } else { "WAN/Internet" }
-    Write-Host "Target : $target  [$netType]"
+    Write-Host "Target : $target  [$(if($isLAN){'LAN'}else{'WAN/Internet'})]"
     Write-Host "Count  : $cnt"; Write-Host ""
 
-    # Chay ping.exe va hien thi real-time, dong thoi thu thap output de parse
-    $pingOut = & ping.exe -n $cnt $target | ForEach-Object { Write-Host $_; $_ }
+    # ---- Thu thap output vao List tuong minh (tranh pipeline object leak) ----
+    $pingLines = [System.Collections.Generic.List[string]]::new()
+    & ping.exe -n $cnt $target | ForEach-Object {
+        Write-Host $_
+        [void]$pingLines.Add([string]$_)
+    }
+    $pingRaw = $pingLines.ToArray()
 
-    # ── Parse summary: dung alternation 1 group ── (tranh loi $Matches[2] empty-string)
+    # ---- Parse: chi lay 6 dong cuoi (summary section) ----
     $sent = $cnt; $lost = 0; $minMs = -1; $avgMs = -1; $maxMs = -1
-    $times = [System.Collections.Generic.List[int]]::new()
+    $summaryLines = if ($pingRaw.Count -ge 6) { $pingRaw[-6..-1] } else { $pingRaw }
 
-    foreach ($line in $pingOut) {
-        # Summary lines: EN "Sent = 10" / VI "Da gui = 10" etc.
-        if ($line -match "(?i)(?:Sent|Da\s*gui)\s*=\s*(\d+)")         { $sent  = [int]$Matches[1] }
-        if ($line -match "(?i)(?:Lost|Mat)\s*=\s*(\d+)")              { $lost  = [int]$Matches[1] }
-        if ($line -match "(?i)(?:Minimum|Toi\s*thieu)\s*=\s*(\d+)")  { $minMs = [int]$Matches[1] }
-        if ($line -match "(?i)(?:Maximum|Toi\s*da)\s*=\s*(\d+)")     { $maxMs = [int]$Matches[1] }
-        if ($line -match "(?i)(?:Average|Trung\s*binh)\s*=\s*(\d+)") { $avgMs = [int]$Matches[1] }
-        # Per-reply RTT: EN "time=21ms" "time<1ms" / VI "thoi gian=21ms"
-        if ($line -match "(?i)(?:time|thoi\s*gian)[=<](\d+)ms")        { $times.Add([int]$Matches[1]) }
+    foreach ($line in $summaryLines) {
+        # English
+        if ($line -match '\bSent\s*=\s*(\d+)')    { $sent  = [int]$Matches[1] }
+        if ($line -match '\bLost\s*=\s*(\d+)')    { $lost  = [int]$Matches[1] }
+        if ($line -match '\bMinimum\s*=\s*(\d+)') { $minMs = [int]$Matches[1] }
+        if ($line -match '\bMaximum\s*=\s*(\d+)') { $maxMs = [int]$Matches[1] }
+        if ($line -match '\bAverage\s*=\s*(\d+)') { $avgMs = [int]$Matches[1] }
+        # Vietnamese
+        if ($line -match '\bDa\s*gui\s*=\s*(\d+)')    { $sent  = [int]$Matches[1] }
+        if ($line -match '\bMat\s*=\s*(\d+)')          { $lost  = [int]$Matches[1] }
+        if ($line -match '\bToi\s*thieu\s*=\s*(\d+)') { $minMs = [int]$Matches[1] }
+        if ($line -match '\bToi\s*da\s*=\s*(\d+)')    { $maxMs = [int]$Matches[1] }
+        if ($line -match '\bTrung\s*binh\s*=\s*(\d+)'){ $avgMs = [int]$Matches[1] }
     }
 
-    # Fallback tinh tay neu OS khong co summary theo mau chuan
-    if ($minMs -eq -1 -and $times.Count -gt 0) {
-        $minMs = ($times | Measure-Object -Minimum).Minimum
-        $maxMs = ($times | Measure-Object -Maximum).Maximum
-        $avgMs = [math]::Round(($times | Measure-Object -Average).Average, 0)
+    # Fallback: tinh tu tung dong reply neu summary khong parse duoc
+    if ($minMs -eq -1) {
+        $times = [System.Collections.Generic.List[int]]::new()
+        foreach ($line in $pingRaw) {
+            if ($line -match '(?i)(?:time|thoi\s*gian)[=<](\d+)ms') {
+                $times.Add([int]$Matches[1])
+            }
+        }
+        if ($times.Count -gt 0) {
+            $minMs = ($times | Measure-Object -Minimum).Minimum
+            $maxMs = ($times | Measure-Object -Maximum).Maximum
+            $avgMs = [math]::Round(($times | Measure-Object -Average).Average, 0)
+            $lost  = $cnt - $times.Count
+        }
     }
-    if ($sent -eq 0) { $sent = $cnt }
-    $lostPct = [math]::Round($lost / $sent * 100, 1)
+    if ($sent -le 0) { $sent = $cnt }
+    $lostPct = [math]::Round([math]::Max(0,$lost) / [math]::Max(1,$sent) * 100, 1)
 
-    # ── Summary display ──
-    Write-Host ""; Write-Host ("─"*42) -ForegroundColor Cyan
+    # ---- Summary display ----
+    Write-Host ""
+    Write-Host ("-"*42) -ForegroundColor Cyan
     Write-Host ("Packets   : $sent sent")
-    Write-Host ("Lost      : $lost ($lostPct%)")
+    Write-Host ("Lost      : $([math]::Max(0,$lost)) ($lostPct%)")
     if ($minMs -ge 0) {
         Write-Host ("Min       : $minMs ms")
         Write-Host ("Avg       : $avgMs ms")
@@ -406,20 +424,20 @@ function Invoke-PingTool {
     }
     Write-Host ""
 
-    # ── Rating dong theo LAN / WAN ──
+    # ---- Rating: LAN vs WAN, linh hoat ----
     $effAvg = if ($avgMs -ge 0) { $avgMs } else { 9999 }
     $ratingText, $ratingColor =
         if ($isLAN) {
-            if ($lostPct -eq 0 -and $effAvg -le 5)        { "[OK] GOOD  - LAN on dinh (avg ${effAvg}ms)",          "Green"  }
-            elseif ($lostPct -lt 5 -and $effAvg -le 50)   { "[!] FAIR  - LAN co van de nhe (loss=$lostPct%)",       "Yellow" }
-            else                                            { "[X] POOR  - LAN gap su co nghiem trong",              "Red"    }
+            if ($lostPct -eq 0 -and $effAvg -le 5)       { "[OK] GOOD  - LAN on dinh (avg ${effAvg}ms)",               "Green"  }
+            elseif ($lostPct -lt 5 -and $effAvg -le 50)  { "[!] FAIR  - LAN co van de nhe (loss=$lostPct%)",            "Yellow" }
+            else                                           { "[X] POOR  - LAN gap su co nghiem trong",                   "Red"    }
         } else {
-            if ($lostPct -lt 2 -and $effAvg -le 150)      { "[OK] GOOD  - Ket noi on dinh (avg ${effAvg}ms)",       "Green"  }
-            elseif ($lostPct -lt 10 -and $effAvg -le 300) { "[!] FAIR  - Co the lag (loss=$lostPct% avg=${effAvg}ms)", "Yellow" }
-            else                                            { "[X] POOR  - Ket noi yeu hoac mat goi nhieu",          "Red"    }
+            if ($lostPct -lt 2 -and $effAvg -le 150)     { "[OK] GOOD  - Ket noi on dinh (avg ${effAvg}ms)",            "Green"  }
+            elseif ($lostPct -lt 10 -and $effAvg -le 300){ "[!] FAIR  - Co the lag (loss=$lostPct% avg=${effAvg}ms)",   "Yellow" }
+            else                                           { "[X] POOR  - Ket noi yeu hoac mat goi nhieu",               "Red"    }
         }
     Write-Host $ratingText -ForegroundColor $ratingColor
-    Write-Log "Ping $target x$cnt [$netType] → Loss=$lostPct% Avg=${avgMs}ms"
+    Write-Log "Ping $target x$cnt [$(if($isLAN){'LAN'}else{'WAN'})] Loss=$lostPct% Avg=${avgMs}ms"
     Pause-Return
 }
 
@@ -776,7 +794,7 @@ function Invoke-CleanupFlow {
         if (Test-Path "$env:windir\MEMORY.DMP") { $dumpMB = [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length/1MB,2) }
         if ($dumpMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Memory Dump", $dumpMB); $total += $dumpMB }
     }
-    Write-Host ("─"*34)
+    Write-Host ("-"*34)
     Write-Host ("{0,-24} {1,8:F2} MB" -f "Potentially removable", [math]::Round($total,2)) -ForegroundColor Yellow
     $ans = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
     if ($ans -eq $Global:ESC -or $ans.ToUpper() -ne "Y") { Pause-Return; return }
