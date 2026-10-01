@@ -5,6 +5,7 @@ $ErrorActionPreference = "SilentlyContinue"
 $LogFile = "$env:TEMP\toolkit_actions_$(Get-Date -Format yyyyMMdd_HHmmss).log"
 $Global:ESC = "##ESC##"
 $Global:NavPath = [System.Collections.Generic.List[string]]::new()
+
 function Write-Nav {
     if ($Global:NavPath.Count -gt 0) {
         Write-Host ("  [" + ($Global:NavPath -join ">") + "]") -ForegroundColor DarkCyan
@@ -12,17 +13,32 @@ function Write-Nav {
     }
 }
 
-function Write-Log { param([string]$M); Add-Content -Path $LogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $env:USERNAME | $M" }
+function Write-Log { 
+    param([string]$M)
+    Add-Content -Path $LogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $env:USERNAME | $M" 
+}
+
 function Test-IsAdmin {
     $p = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
-if (-not (Test-IsAdmin)) { Write-Host "Can quyen Administrator." -ForegroundColor Red; Read-Host; exit }
+
+if (-not (Test-IsAdmin)) { 
+    Write-Host "Can quyen Administrator." -ForegroundColor Red
+    Read-Host
+    exit 
+}
 
 try {
-    $rawui = $Host.UI.RawUI; $buf = $rawui.BufferSize
-    $buf.Width = [Math]::Max($buf.Width, 62); $buf.Height = 3000; $rawui.BufferSize = $buf
-    $ws = $rawui.WindowSize; $ws.Width = 62; $ws.Height = 42; $rawui.WindowSize = $ws
+    $rawui = $Host.UI.RawUI
+    $buf = $rawui.BufferSize
+    $buf.Width = [Math]::Max($buf.Width, 62)
+    $buf.Height = 3000
+    $rawui.BufferSize = $buf
+    $ws = $rawui.WindowSize
+    $ws.Width = 62
+    $ws.Height = 42
+    $rawui.WindowSize = $ws
 } catch {}
 
 # ============================================================
@@ -37,10 +53,16 @@ function Read-Esc {
         if ($k.Key -eq 'Escape') { Write-Host ""; return $Global:ESC }
         if ($k.Key -eq 'Enter') { Write-Host ""; return $buf }
         if ($k.Key -eq 'Backspace') {
-            if ($buf.Length -gt 0) { $buf=$buf.Substring(0,$buf.Length-1); Write-Host -NoNewline ([char]8+" "+[char]8) }
+            if ($buf.Length -gt 0) { 
+                $buf = $buf.Substring(0, $buf.Length - 1)
+                Write-Host -NoNewline ([char]8 + " " + [char]8) 
+            }
             continue
         }
-        if (-not [char]::IsControl($k.KeyChar)) { $buf+=$k.KeyChar; Write-Host -NoNewline $k.KeyChar }
+        if (-not [char]::IsControl($k.KeyChar)) { 
+            $buf += $k.KeyChar
+            Write-Host -NoNewline $k.KeyChar 
+        }
     }
 }
 
@@ -51,7 +73,7 @@ function Read-IPEsc {
         if ($v -eq $Global:ESC) { return $Global:ESC }
         if ($v -match '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$') {
             $ok = $true
-            foreach ($oct in @($Matches[1],$Matches[2],$Matches[3],$Matches[4])) {
+            foreach ($oct in @($Matches[1], $Matches[2], $Matches[3], $Matches[4])) {
                 if ([int]$oct -gt 255) { $ok = $false; break }
             }
             if ($ok) { return $v }
@@ -69,7 +91,7 @@ function Get-PrefixLength {
     if ($s -match '^\d+$' -and [int]$s -ge 0 -and [int]$s -le 32) { return [int]$s }
     if ($s -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
         $parts = $s -split '\.'
-        $bin = ($parts | ForEach-Object { [Convert]::ToString([int]$_,2).PadLeft(8,'0') }) -join ''
+        $bin = ($parts | ForEach-Object { [Convert]::ToString([int]$_, 2).PadLeft(8, '0') }) -join ''
         return ($bin.ToCharArray() | Where-Object { $_ -eq '1' }).Count
     }
     return -1
@@ -78,10 +100,10 @@ function Get-PrefixLength {
 function Select-NetIdx {
     $adapters = @(Get-NetAdapter | Where-Object Status -eq 'Up')
     Write-Host ""
-    Write-Host ("  {0,-5} {1,-22} {2}" -f "Idx","Name","Description") -ForegroundColor Cyan
-    Write-Host ("  " + ("-"*56))
+    Write-Host ("  {0,-5} {1,-22} {2}" -f "Idx", "Name", "Description") -ForegroundColor Cyan
+    Write-Host ("  " + ("-" * 56))
     foreach ($a in $adapters) {
-        Write-Host ("  {0,-5} {1,-22} {2}" -f $a.InterfaceIndex, $a.Name, ($a.InterfaceDescription -replace '^\s+',''))
+        Write-Host ("  {0,-5} {1,-22} {2}" -f $a.InterfaceIndex, $a.Name, ($a.InterfaceDescription -replace '^\s+', ''))
     }
     Write-Host ""
     while ($true) {
@@ -118,18 +140,18 @@ function Pause-Return {
 }
 
 function Download-WithProgress {
-    param([string]$Url,[string]$Dest,[string]$Name)
+    param([string]$Url, [string]$Dest, [string]$Name)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $job = Start-Job -ScriptBlock {
-            param($u,$d)
+            param($u, $d)
             $wc = New-Object System.Net.WebClient
-            $wc.Headers.Add("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            $wc.DownloadFile($u,$d)
-        } -ArgumentList $Url,$Dest
-        $spin = @('|','/','-','\'); $si = 0
+            $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            $wc.DownloadFile($u, $d)
+        } -ArgumentList $Url, $Dest
+        $spin = @('|', '/', '-', '\'); $si = 0
         while ($job.State -eq 'Running') {
-            $sz = if (Test-Path $Dest) { [math]::Round((Get-Item $Dest).Length/1MB,1) } else { 0 }
+            $sz = if (Test-Path $Dest) { [math]::Round((Get-Item $Dest).Length / 1MB, 1) } else { 0 }
             Write-Host -NoNewline "`rDang tai $Name`: $($spin[$si%4]) $sz MB - $([math]::Round($sw.Elapsed.TotalSeconds,1))s  "
             $si++; Start-Sleep -Milliseconds 300
         }
@@ -161,19 +183,19 @@ function Show-Menu {
                 try {
                     & $Options[$c].Action
                 } finally {
-                    if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
+                    if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count - 1) }
                 }
             }
         } while ($true)
     } finally {
-        if ($NavEntry -and $Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
+        if ($NavEntry -and $Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count - 1) }
     }
 }
 
 function Run-Task {
-    param([string]$Title,[scriptblock]$Action,[bool]$NeedConfirm=$false,[string]$ConfirmMsg="")
+    param([string]$Title, [scriptblock]$Action, [bool]$NeedConfirm = $false, [string]$ConfirmMsg = "")
     Clear-Host; Write-Nav; Write-Host "=== $Title ===" -ForegroundColor Cyan
-    if ($NeedConfirm -and (-not (Confirm-Action $ConfirmMsg))) { return $null }
+    if ($NeedConfirm -and (-not (Confirm-Action $ConfirmMsg))) { return 1 }
     $exitCode = 0
     $Global:LASTEXITCODE = 0
     try {
@@ -196,7 +218,7 @@ function Run-Task {
 # 1. NETWORK TROUBLESHOOT
 # ============================================================
 function Show-NetworkInfo {
-    Clear-Host; Write-Nav; Write-Host "=== THONG TIN MANG HIEN TAI ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== THONG TIN MANG & QUICK NETWORK TEST ===" -ForegroundColor Cyan
     $cs = Get-CimInstance Win32_ComputerSystem
     Write-Host "Hostname          : $($cs.Name)"
     Write-Host "Domain/Workgroup  : $($cs.Domain)"
@@ -209,7 +231,57 @@ function Show-NetworkInfo {
         Write-Host "  DNS     : $($_.DNSServer.ServerAddresses -join ', ')"
     }
     Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { Write-Host "  MAC ($($_.Name)): $($_.MacAddress)" }
-    Write-Log "Xem thong tin mang"; Pause-Return
+
+    Write-Host "`n--- DANG CHAY QUICK NETWORK TEST ---" -ForegroundColor Cyan
+    $adapters = @(Get-NetAdapter | Where-Object Status -eq 'Up')
+    if ($adapters.Count -eq 0) {
+        Write-Host "[X] KHONG CO ADAPTER MANG NAO DANG KET NOI!" -ForegroundColor Red
+        Write-Log "Xem thong tin mang & Quick Test - No Adapter Up"
+        Pause-Return
+        return
+    }
+
+    $idxNum =$adapters[0].InterfaceIndex
+    $adapter   =$adapters[0]
+    $ipConfig  = Get-NetIPConfiguration -InterfaceIndex$idxNum
+    $adIP      =$ipConfig.IPv4Address.IPAddress
+    $adGW      =$ipConfig.IPv4DefaultGateway.NextHop
+
+    # 1. Adapter
+    $ok1 =$adapter.Status -eq 'Up'
+    Write-Host ("[{0}] Adapter    : {1} ({2})" -f $(if($ok1){"OK"}else{"X"}), $adapter.Name, $adapter.Status) -ForegroundColor $(if($ok1){'Green'}else{'Red'})
+
+    # 2. IP
+    $ok2 = $null -ne$adIP
+    Write-Host ("[{0}] IP Address : {1}" -f $(if($ok2){"OK"}else{"X"}), $(if($ok2){$adIP}else{"Khong co IP"})) -ForegroundColor $(if($ok2){'Green'}else{'Red'})
+
+    # 3. Gateway ping
+    $ok3 = $false; $gwMs = 0
+    if ($adGW) {
+        $r = Test-Connection -ComputerName$adGW -Count 1 -EA SilentlyContinue
+        $ok3 =$null -ne $r; $gwMs = if($ok3){$r.ResponseTime}else{0}
+        Write-Host ("[{0}] Gateway    : {1} {2}" -f $(if($ok3){"OK"}else{"X"}), $adGW,$(if($ok3){"-> Ping ${gwMs}ms"}else{"-> KHONG PING DUOC"})) -ForegroundColor $(if($ok3){'Green'}else{'Yellow'})
+    } else {
+        Write-Host "[!] Gateway    : Khong co Gateway" -ForegroundColor Yellow
+    }
+
+    # 4. DNS
+    $ok4 = $false; $dnsIp = ""
+    try { $r4 = [System.Net.Dns]::GetHostAddresses("google.com"); $ok4 =$r4.Count -gt 0; $dnsIp =$r4[0].IPAddressToString } catch {}
+    Write-Host ("[{0}] DNS        : {1}" -f $(if($ok4){"OK"}else{"X"}), $(if($ok4){"Resolve google.com -> $dnsIp"}else{"KHONG RESOLVE DUOC -> kiem tra DNS"})) -ForegroundColor $(if($ok4){'Green'}else{'Red'})
+
+    # 5. Internet
+    $r5 = Test-Connection -ComputerName "8.8.8.8" -Count 1 -EA SilentlyContinue
+    $ok5 = $null -ne$r5
+    Write-Host ("[{0}] Internet   : {1}" -f $(if($ok5){"OK"}else{"X"}), $(if($ok5){"8.8.8.8 -> Reachable ($($r5.ResponseTime)ms)"}else{"KHONG KET NOI INTERNET"})) -ForegroundColor $(if($ok5){'Green'}else{'Red'})
+
+    Write-Host ""; Write-Host ("-"*48) -ForegroundColor Cyan
+    $allOk = $ok1 -and$ok2 -and $ok4 -and$ok5
+    if ($allOk) { Write-Host "  Ket qua : TAT CA BINH THUONG" -ForegroundColor Green }
+    else        { Write-Host "  Ket qua : CO LOI - Xem huong dan tren" -ForegroundColor Red }
+
+    Write-Log "Xem thong tin mang & Quick Test - interface $idxNum"
+    Pause-Return
 }
 
 function Set-ComputerNameDomain {
@@ -220,7 +292,7 @@ function Set-ComputerNameDomain {
     Write-Host "0. Quay lai"
     Write-Host ""
     $c = Read-Esc "Chon chuc nang: "
-    if ($c -eq $Global:ESC -or $c -eq "0") { return }
+    if ($c -eq $Global:ESC -or$c -eq "0") { return }
 
     switch ($c) {
         "1" {
@@ -228,26 +300,25 @@ function Set-ComputerNameDomain {
             if ($newName -eq $Global:ESC -or [string]::IsNullOrWhiteSpace($newName)) { return }
             if (-not (Confirm-Action "Doi ten may sang '$newName' (can khoi dong lai)?")) { return }
             try {
-                Rename-Computer -NewName $newName -Force -ErrorAction Stop
+                Rename-Computer -NewName $newName.Trim() -Force -ErrorAction Stop
                 Write-Log "Doi hostname: $newName"
                 Write-Host "Da doi ten may thanh cong. Vui long khoi dong lai may." -ForegroundColor Green
             } catch {
-                Write-Log "Doi hostname $newName LOI: $_"
+                Write-Log "Doi hostname $newName LOI:$_"
                 Write-Host "Loi doi ten may: $_" -ForegroundColor Red
             }
         }
         "2" {
             $newDom = Read-Esc "Ten Domain moi (ESC de huy): "
-            if ($newDom -eq $Global:ESC -or [string]::IsNullOrWhiteSpace($newDom)) { return }
-            $cred = Get-Credential -Message "Nhap tai khoan quan tri Domain de join '$newDom'"
-            if ($null -eq $cred) { return }
+            if ($newDom -eq$Global:ESC -or [string]::IsNullOrWhiteSpace($newDom)) { return }$cred = Get-Credential -Message "Nhap tai khoan quan tri Domain de join '$newDom'"
+            if ($null -eq$cred) { return }
             if (-not (Confirm-Action "Gia nhap domain '$newDom' (can khoi dong lai)?")) { return }
             try {
-                Add-Computer -DomainName $newDom -Credential $cred -Force -ErrorAction Stop
+                Add-Computer -DomainName $newDom.Trim() -Credential$cred -Force -ErrorAction Stop
                 Write-Log "Join domain: $newDom"
                 Write-Host "Da join domain $newDom thanh cong. Vui long khoi dong lai may." -ForegroundColor Green
             } catch {
-                Write-Log "Join domain $newDom LOI: $_"
+                Write-Log "Join domain $newDom LOI:$_"
                 Write-Host "Loi join domain: $_" -ForegroundColor Red
             }
         }
@@ -256,11 +327,11 @@ function Set-ComputerNameDomain {
             if ($newWg -eq $Global:ESC -or [string]::IsNullOrWhiteSpace($newWg)) { return }
             if (-not (Confirm-Action "Doi Workgroup sang '$newWg' (can khoi dong lai)?")) { return }
             try {
-                Add-Computer -WorkgroupName $newWg -Force -ErrorAction Stop
+                Add-Computer -WorkgroupName $newWg.Trim() -Force -ErrorAction Stop
                 Write-Log "Doi workgroup: $newWg"
                 Write-Host "Da doi Workgroup thanh cong. Vui long khoi dong lai may." -ForegroundColor Green
             } catch {
-                Write-Log "Doi workgroup $newWg LOI: $_"
+                Write-Log "Doi workgroup $newWg LOI:$_"
                 Write-Host "Loi doi workgroup: $_" -ForegroundColor Red
             }
         }
@@ -277,13 +348,11 @@ function Reset-IPAddress {
 
 function Set-StaticIP {
     Clear-Host; Write-Nav; Write-Host "=== DAT IP TINH ===" -ForegroundColor Cyan
-    $idx = Select-NetIdx; if ($null -eq $idx) { return }
-    $ip = Read-IPEsc "Dia chi IP (vd: 192.168.1.50)"; if ($ip -eq $Global:ESC) { return }
-    $prefixRaw = Read-Esc "Prefix / Subnet mask (mac dinh 24 / 255.255.255.0, Enter dung mac dinh): "
-    if ($prefixRaw -eq $Global:ESC) { return }
-    $prefix = Get-PrefixLength $prefixRaw
+    $idx = Select-NetIdx; if ($null -eq $idx) { return }$ip = Read-IPEsc "Dia chi IP (vd: 192.168.1.50)"; if ($ip -eq $Global:ESC) { return }$prefixRaw = Read-Esc "Prefix / Subnet mask (mac dinh 24 / 255.255.255.0, Enter dung mac dinh): "
+    if ($prefixRaw -eq$Global:ESC) { return }
+    $prefix = Get-PrefixLength$prefixRaw
     if ($prefix -lt 0) { Write-Host "Gia tri khong hop le."; Pause-Return; return }
-    $gw = Read-IPEsc "Default Gateway (vd: 192.168.1.1)"; if ($gw -eq $Global:ESC) { return }
+    $gw = Read-IPEsc "Default Gateway (vd: 192.168.1.1)"; if ($gw -eq$Global:ESC) { return }
     Write-Host "`nSe dat: $ip /$prefix  GW: $gw  tren interface $idx" -ForegroundColor Yellow
     if (-not (Confirm-Action "Tiep tuc?")) { return }
     try {
@@ -316,9 +385,9 @@ function Reset-NetworkFull {
     Clear-Host; Write-Nav; Write-Host "=== RESET MANG ===" -ForegroundColor Cyan
     $adapters = @(Get-NetAdapter | Where-Object Status -eq 'Up')
     Write-Host ""
-    Write-Host ("  {0,-5} {1,-22} {2}" -f "Idx","Name","Description") -ForegroundColor Cyan
-    Write-Host ("  " + ("-"*56))
-    Write-Host ("  {0,-5} {1,-22} {2}" -f "ALL","--- TAT CA ---","Reset toan bo mang")
+    Write-Host ("  {0,-5} {1,-22} {2}" -f "Idx", "Name", "Description") -ForegroundColor Cyan
+    Write-Host ("  " + ("-" * 56))
+    Write-Host ("  {0,-5} {1,-22} {2}" -f "ALL", "--- TAT CA ---", "Reset toan bo mang")
     foreach ($a in $adapters) {
         Write-Host ("  {0,-5} {1,-22} {2}" -f $a.InterfaceIndex, $a.Name, $a.InterfaceDescription)
     }
@@ -341,7 +410,7 @@ function Reset-NetworkFull {
         Write-Log "Reset toan bo mang (ALL)"
     } else {
         [int]$idxNum = 0
-        if (-not [int]::TryParse($choice.Trim(),[ref]$idxNum)) {
+        if (-not [int]::TryParse($choice.Trim(), [ref]$idxNum)) {
             Write-Host "Gia tri khong hop le." -ForegroundColor Red; Pause-Return; return
         }
         $ad = $adapters | Where-Object InterfaceIndex -eq $idxNum
@@ -360,72 +429,22 @@ function Reset-NetworkFull {
     Pause-Return
 }
 
-function Invoke-QuickNetworkTest {
-    Clear-Host; Write-Nav; Write-Host "=== QUICK NETWORK TEST ===" -ForegroundColor Cyan
-    $idxNum = Select-NetIdx
-    if ($null -eq $idxNum) { return }
-    $adapter   = Get-NetAdapter | Where-Object InterfaceIndex -eq $idxNum
-    $ipConfig  = Get-NetIPConfiguration -InterfaceIndex $idxNum
-    $adIP      = $ipConfig.IPv4Address.IPAddress
-    $adGW      = $ipConfig.IPv4DefaultGateway.NextHop
-    Write-Host ""; Write-Host "Dang kiem tra..." -ForegroundColor Cyan; Write-Host ""
-
-    # 1. Adapter
-    $ok1 = $adapter.Status -eq 'Up'
-    Write-Host ("[{0}] Adapter    : {1} ({2})" -f $(if($ok1){"OK"}else{"X"}), $adapter.Name, $adapter.Status) -ForegroundColor $(if($ok1){'Green'}else{'Red'})
-    if (-not $ok1) { Write-Host "  Nguyen nhan: Adapter tat hoac cap khong cam." -ForegroundColor Yellow; Pause-Return; return }
-
-    # 2. IP
-    $ok2 = $adIP -ne $null
-    Write-Host ("[{0}] IP Address : {1}" -f $(if($ok2){"OK"}else{"X"}), $(if($ok2){$adIP}else{"Khong co IP"})) -ForegroundColor $(if($ok2){'Green'}else{'Red'})
-    if (-not $ok2) { Write-Host "  Nguyen nhan: Chua nhan duoc IP. Thu Renew IP (menu 3)." -ForegroundColor Yellow; Pause-Return; return }
-
-    # 3. Gateway ping
-    $ok3 = $false; $gwMs = 0
-    if ($adGW) {
-        $r = Test-Connection -ComputerName $adGW -Count 1 -EA SilentlyContinue
-        $ok3 = $null -ne $r; $gwMs = if($ok3){$r.ResponseTime}else{0}
-        Write-Host ("[{0}] Gateway    : {1} {2}" -f $(if($ok3){"OK"}else{"X"}), $adGW, $(if($ok3){"-> Ping ${gwMs}ms"}else{"-> KHONG PING DUOC"})) -ForegroundColor $(if($ok3){'Green'}else{'Yellow'})
-    } else {
-        Write-Host "[!] Gateway    : Khong co Gateway" -ForegroundColor Yellow
-    }
-
-    # 4. DNS
-    $ok4 = $false; $dnsIp = ""
-    try { $r4=[System.Net.Dns]::GetHostAddresses("google.com"); $ok4=$r4.Count-gt 0; $dnsIp=$r4[0].IPAddressToString } catch {}
-    Write-Host ("[{0}] DNS        : {1}" -f $(if($ok4){"OK"}else{"X"}), $(if($ok4){"Resolve google.com -> $dnsIp"}else{"KHONG RESOLVE DUOC -> kiem tra DNS"})) -ForegroundColor $(if($ok4){'Green'}else{'Red'})
-
-    # 5. Internet
-    $r5 = Test-Connection -ComputerName "8.8.8.8" -Count 1 -EA SilentlyContinue
-    $ok5 = $null -ne $r5
-    Write-Host ("[{0}] Internet   : {1}" -f $(if($ok5){"OK"}else{"X"}), $(if($ok5){"8.8.8.8 -> Reachable ($($r5.ResponseTime)ms)"}else{"KHONG KET NOI INTERNET"})) -ForegroundColor $(if($ok5){'Green'}else{'Red'})
-
-    Write-Host ""; Write-Host ("-"*48) -ForegroundColor Cyan
-    $allOk = $ok1 -and $ok2 -and $ok4 -and $ok5
-    if ($allOk) { Write-Host "  Ket qua : TAT CA BINH THUONG" -ForegroundColor Green }
-    else        { Write-Host "  Ket qua : CO LOI - Xem huong dan tren" -ForegroundColor Red }
-    Write-Log "Quick Network Test - interface $idxNum"
-    Pause-Return
-}
-
 function Invoke-PingTool {
     Clear-Host; Write-Nav; Write-Host "=== PING ===" -ForegroundColor Cyan
     Write-Host ""
     $target = Read-Esc "Nhap target (IP hoac domain): "
-    if ($target -eq $Global:ESC -or $target -eq "") { return }
+    if ($target -eq $Global:ESC -or$target -eq "") { return }
     $cntStr = Read-Esc "So goi (mac dinh 10, Enter = 10): "
-    if ($cntStr -eq $Global:ESC) { return }
+    if ($cntStr -eq$Global:ESC) { return }
     [int]$cnt = if ($cntStr -match "^\d+$" -and [int]$cntStr -gt 0) { [int]$cntStr } else { 10 }
 
-    # Phat hien LAN hay WAN de chon nguong danh gia
-    $isLAN = ($target -match "^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)|^localhost$|^127\.") `
-             -or ($target -match "^[a-zA-Z0-9_-]+$")   # hostname don gian (khong co dau .) = LAN
+    $isLAN = ($target -match "^(10\.\vert{}192\.168\.\vert{}172\.(1[6-9]\vert{}2[0-9]\vert{}3[01])\.)\vert{}^localhost$|^127\.") `
+             -or ($target -match "^[a-zA-Z0-9_-]+$")
 
     Clear-Host; Write-Nav; Write-Host "=== PING ===" -ForegroundColor Cyan
     Write-Host "Target : $target  [$(if($isLAN){'LAN'}else{'WAN/Internet'})]"
     Write-Host "Count  : $cnt"; Write-Host ""
 
-    # ---- Thu thap output vao List tuong minh (tranh pipeline object leak) ----
     $pingLines = [System.Collections.Generic.List[string]]::new()
     & ping.exe -n $cnt $target | ForEach-Object {
         Write-Host $_
@@ -433,18 +452,16 @@ function Invoke-PingTool {
     }
     $pingRaw = $pingLines.ToArray()
 
-    # ---- Parse: chi lay 6 dong cuoi (summary section) ----
     $sent = $cnt; $lost = 0; $minMs = -1; $avgMs = -1; $maxMs = -1
     $summaryLines = if ($pingRaw.Count -ge 6) { $pingRaw[-6..-1] } else { $pingRaw }
 
     foreach ($line in $summaryLines) {
-        # English
         if ($line -match '\bSent\s*=\s*(\d+)')    { $sent  = [int]$Matches[1] }
         if ($line -match '\bLost\s*=\s*(\d+)')    { $lost  = [int]$Matches[1] }
         if ($line -match '\bMinimum\s*=\s*(\d+)') { $minMs = [int]$Matches[1] }
         if ($line -match '\bMaximum\s*=\s*(\d+)') { $maxMs = [int]$Matches[1] }
         if ($line -match '\bAverage\s*=\s*(\d+)') { $avgMs = [int]$Matches[1] }
-        # Vietnamese
+
         if ($line -match '\bDa\s*gui\s*=\s*(\d+)')    { $sent  = [int]$Matches[1] }
         if ($line -match '\bMat\s*=\s*(\d+)')          { $lost  = [int]$Matches[1] }
         if ($line -match '\bToi\s*thieu\s*=\s*(\d+)') { $minMs = [int]$Matches[1] }
@@ -452,7 +469,6 @@ function Invoke-PingTool {
         if ($line -match '\bTrung\s*binh\s*=\s*(\d+)'){ $avgMs = [int]$Matches[1] }
     }
 
-    # Fallback: tinh tu tung dong reply neu summary khong parse duoc
     if ($minMs -eq -1) {
         $times = [System.Collections.Generic.List[int]]::new()
         foreach ($line in $pingRaw) {
@@ -468,11 +484,10 @@ function Invoke-PingTool {
         }
     }
     if ($sent -le 0) { $sent = $cnt }
-    $lostPct = [math]::Round([math]::Max(0,$lost) / [math]::Max(1,$sent) * 100, 1)
+    $lostPct = [math]::Round([math]::Max(0, $lost) / [math]::Max(1, $sent) * 100, 1)
 
-    # ---- Summary display ----
     Write-Host ""
-    Write-Host ("-"*42) -ForegroundColor Cyan
+    Write-Host ("-" * 42) -ForegroundColor Cyan
     Write-Host ("Packets   : $sent sent")
     Write-Host ("Lost      : $([math]::Max(0,$lost)) ($lostPct%)")
     if ($minMs -ge 0) {
@@ -482,7 +497,6 @@ function Invoke-PingTool {
     }
     Write-Host ""
 
-    # ---- Rating: LAN vs WAN, linh hoat ----
     $effAvg = if ($avgMs -ge 0) { $avgMs } else { 9999 }
     $ratingText, $ratingColor =
         if ($isLAN) {
@@ -503,7 +517,7 @@ function Invoke-NetworkQuality {
     Clear-Host; Write-Nav; Write-Host "=== NETWORK QUALITY (60 giay) ===" -ForegroundColor Cyan
     Write-Host "Ping xen ke 8.8.8.8 va 1.1.1.1 trong 60 giay + Speed Test..." -ForegroundColor Gray
     Write-Host ""
-    $targets   = @("8.8.8.8","1.1.1.1")
+    $targets   = @("8.8.8.8", "1.1.1.1")
     $latencies = [System.Collections.Generic.List[int]]::new()
     $jitters   = [System.Collections.Generic.List[double]]::new()
     $lost = 0; $total = 0; $prevMs = -1; $ti = 0; $duration = 60
@@ -530,24 +544,22 @@ function Invoke-NetworkQuality {
     }
     Write-Host ""; Write-Host ""
 
-    # Speed test
     Write-Host "Dang do toc do download (Cloudflare 5MB)..." -ForegroundColor Yellow
     $dlMbps = -1
     try {
         $dlSw = [System.Diagnostics.Stopwatch]::StartNew()
         $wc2  = New-Object System.Net.WebClient
-        $wc2.Headers.Add("User-Agent","Mozilla/5.0")
+        $wc2.Headers.Add("User-Agent", "Mozilla/5.0")
         $data = $wc2.DownloadData("https://speed.cloudflare.com/__down?bytes=5000000")
         $dlSw.Stop()
-        if ($data.Length -gt 0) { $dlMbps = [math]::Round(($data.Length/1MB)/$dlSw.Elapsed.TotalSeconds,2) }
+        if ($data.Length -gt 0) { $dlMbps = [math]::Round(($data.Length / 1MB) / $dlSw.Elapsed.TotalSeconds, 2) }
     } catch {}
 
-    # Ket qua
-    $lossPct   = if ($total -gt 0) { [math]::Round($lost/$total*100,1) } else { 100 }
-    $avgLat    = if ($latencies.Count -gt 0) { [math]::Round(($latencies|Measure-Object -Average).Average,1) } else { 999 }
-    $minLat    = if ($latencies.Count -gt 0) { ($latencies|Measure-Object -Minimum).Minimum } else { 0 }
-    $maxLat    = if ($latencies.Count -gt 0) { ($latencies|Measure-Object -Maximum).Maximum } else { 0 }
-    $avgJitter = if ($jitters.Count -gt 0)   { [math]::Round(($jitters|Measure-Object -Average).Average,1) } else { 0 }
+    $lossPct   = if ($total -gt 0) { [math]::Round($lost / $total * 100, 1) } else { 100 }
+    $avgLat    = if ($latencies.Count -gt 0) { [math]::Round(($latencies | Measure-Object -Average).Average, 1) } else { 999 }
+    $minLat    = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Minimum).Minimum } else { 0 }
+    $maxLat    = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Maximum).Maximum } else { 0 }
+    $avgJitter = if ($jitters.Count -gt 0)   { [math]::Round(($jitters | Measure-Object -Average).Average, 1) } else { 0 }
 
     Write-Host "=== KET QUA ===" -ForegroundColor Cyan
     Write-Host ("  Latency (Avg)  : {0,8} ms" -f $avgLat)
@@ -559,7 +571,6 @@ function Invoke-NetworkQuality {
     else               { Write-Host "  Download Speed : (Khong do duoc)" -ForegroundColor Gray }
     Write-Host ""
 
-    # Rating theo thuc te mang Viet Nam (target la 8.8.8.8/1.1.1.1 = WAN quoc te)
     $ratingText, $ratingColor =
         if    ($avgLat -lt 60  -and $lossPct -eq 0 -and $avgJitter -lt 10) {
             "[OK] EXCELLENT - Rat tot (gaming / video call 4K)",             "Green" }
@@ -577,22 +588,21 @@ function Invoke-NetworkQuality {
 
 function Menu-Network {
     Show-Menu -Title "1. NETWORK TROUBLESHOOT" -NavEntry "1" -Options ([ordered]@{
-        "1"=@{Label="Kiem tra thong tin mang";Action={Show-NetworkInfo}}
+        "1"=@{Label="Kiem tra thong tin mang & Quick Network Test";Action={Show-NetworkInfo}}
         "2"=@{Label="Dat lai ten may (Hostname/Domain/Workgroup)";Action={Set-ComputerNameDomain}}
         "3"=@{Label="Xoa IP cu, nhan IP moi";Action={Reset-IPAddress}}
         "4"=@{Label="Dat IP tinh";Action={Set-StaticIP}}
         "5"=@{Label="Dat DNS tinh";Action={Set-StaticDNS}}
         "6"=@{Label="Reset mang (chon Interface / ALL)";Action={Reset-NetworkFull}}
-        "7"=@{Label="Quick Network Test";Action={Invoke-QuickNetworkTest}}
-        "8"=@{Label="Ping";Action={Invoke-PingTool}}
-        "9"=@{Label="Network Quality (60s + Speed Test)";Action={Invoke-NetworkQuality}}
+        "7"=@{Label="Ping";Action={Invoke-PingTool}}
+        "8"=@{Label="Network Quality (60s + Speed Test)";Action={Invoke-NetworkQuality}}
     })
 }
 
 # ============================================================
 # 2. PRINTER & FILE SHARING
 # ============================================================
-function Add-CheckRow { param($L,[string]$N,[bool]$P,[string]$D=""); $L.Add([PSCustomObject]@{Hang_muc=$N;Ket_qua=$(if($P){"[OK]"}else{"[LOI]"});Chi_tiet=$D}) }
+function Add-CheckRow { param($L, [string]$N, [bool]$P, [string]$D = ""); $L.Add([PSCustomObject]@{Hang_muc=$N; Ket_qua=$(if($P){"[OK]"}else{"[LOI]"}); Chi_tiet=$D}) }
 
 function Test-FileSharingLan {
     Clear-Host; Write-Nav; Write-Host "=== CHAN DOAN CAI DAT CHIA SE FILE QUA LAN ===" -ForegroundColor Cyan
@@ -680,17 +690,17 @@ function Show-SoftwareInfo {
 
 function Show-HardwareInfoFull {
     Clear-Host; Write-Nav; Write-Host "=== THONG TIN PHAN CUNG ===" -ForegroundColor Cyan
-    $cs=Get-CimInstance Win32_ComputerSystem; $p=Get-CimInstance Win32_ComputerSystemProduct
-    $b=Get-CimInstance Win32_BIOS; $os=Get-CimInstance Win32_OperatingSystem
+    $cs = Get-CimInstance Win32_ComputerSystem; $p = Get-CimInstance Win32_ComputerSystemProduct
+    $b  = Get-CimInstance Win32_BIOS; $os = Get-CimInstance Win32_OperatingSystem
     Write-Host "Hang san xuat : $($cs.Manufacturer)"
     Write-Host "Model may     : $($p.Name)"
     Write-Host "Serial number : $($p.IdentifyingNumber)"
     Write-Host "UUID          : $($p.UUID)"
     Write-Host "BIOS Version  : $($b.SMBIOSBIOSVersion)"
     Write-Host "BIOS Date     : $($b.ReleaseDate)"
-    $up=(Get-Date)-$os.LastBootUpTime; Write-Host "Uptime        : $($up.Days)d $($up.Hours)h $($up.Minutes)m"
+    $up = (Get-Date) - $os.LastBootUpTime; Write-Host "Uptime        : $($up.Days)d $($up.Hours)h $($up.Minutes)m"
     Write-Host "`n--- CPU ---" -ForegroundColor Yellow
-    $cpu=Get-CimInstance Win32_Processor
+    $cpu = Get-CimInstance Win32_Processor
     Write-Host "Ten             : $($cpu.Name)"
     Write-Host "So core         : $($cpu.NumberOfCores)"
     Write-Host "Logical Proc.   : $($cpu.NumberOfLogicalProcessors)"
@@ -712,7 +722,7 @@ function Show-HardwareInfoFull {
     Write-Host "`n--- O CUNG ---" -ForegroundColor Yellow
     Get-PhysicalDisk | ForEach-Object { Write-Host "O dia : $($_.FriendlyName) | Health: $($_.HealthStatus) | $([math]::Round($_.Size/1GB,2)) GB" }
     Get-Volume | Where-Object DriveLetter | ForEach-Object {
-        $letter=$_.DriveLetter; $free=[math]::Round($_.SizeRemaining/1GB,2); $total=[math]::Round($_.Size/1GB,2)
+        $letter =$_.DriveLetter; $free = [math]::Round($_.SizeRemaining/1GB,2); $total = [math]::Round($_.Size/1GB,2)
         $part = Get-Partition \vert{} Where-Object DriveLetter -eq$letter | Select-Object -First 1
         Write-Host "  Drive ${letter}: | Free: ${free} /${total} GB | Type: $($part.Type)"
     }
@@ -723,22 +733,22 @@ function Show-HardwareInfoFull {
     Write-Host "--- MAN HINH ---" -ForegroundColor Yellow
     try {
         Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorID -EA Stop | ForEach-Object {
-            $name=($_.UserFriendlyName|Where-Object{$_ -ne 0}|ForEach-Object{[char]$_})-join""
-            $sn=($_.SerialNumberID|Where-Object{$_ -ne 0}|ForEach-Object{[char]$_})-join""
+            $name = ($_.UserFriendlyName | Where-Object { $_ -ne 0 } | ForEach-Object { [char]$_ }) -join ""
+            $sn   = ($_.SerialNumberID     | Where-Object { $_ -ne 0 } | ForEach-Object { [char]$_ }) -join ""
             Write-Host "EDID: $name | Serial: $sn"
         }
     } catch { Write-Host "(Khong doc WmiMonitorID)" }
     Get-CimInstance Win32_VideoController | ForEach-Object { Write-Host "Resolution: $($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution) | Refresh: $($_.CurrentRefreshRate) Hz" }
     Write-Host "`n--- CARD MANG ---" -ForegroundColor Yellow
     Get-NetAdapter | ForEach-Object {
-        $type=if($_.Name -match 'Wi-?Fi|Wireless|WLAN'){'Wi-Fi'}else{'Ethernet'}
+        $type = if ($_.Name -match 'Wi-?Fi|Wireless|WLAN') { 'Wi-Fi' } else { 'Ethernet' }
         Write-Host "$type | $($_.Name) | MAC: $($_.MacAddress) | Status: $($_.Status) | Speed: $($_.LinkSpeed)"
     }
     Write-Host "`n--- PIN LAPTOP ---" -ForegroundColor Yellow
-    $bat=Get-CimInstance Win32_Battery
+    $bat = Get-CimInstance Win32_Battery
     if ($bat) {
         foreach ($bx in $bat) {
-            $st=if($BAT_MAP.ContainsKey([int]$bx.BatteryStatus)){$BAT_MAP[[int]$bx.BatteryStatus]}else{"Code=$($bx.BatteryStatus)"}
+            $st = if ($BAT_MAP.ContainsKey([int]$bx.BatteryStatus)) { $BAT_MAP[[int]$bx.BatteryStatus] } else { "Code=$($bx.BatteryStatus)" }
             Write-Host "Ten: $($bx.Name) | Sac: $($bx.EstimatedChargeRemaining)% | Trang thai: $st"
         }
         try {
@@ -753,7 +763,7 @@ function Show-HardwareInfoFull {
 function Show-LicenseInfo {
     Clear-Host; Write-Nav; Write-Host "=== BAN QUYEN WINDOWS / OFFICE ===" -ForegroundColor Cyan
     cscript //nologo "$env:windir\System32\slmgr.vbs" /dli
-    $ospp = Get-ChildItem "C:\Program Files\Microsoft Office\Office*\ospp.vbs","C:\Program Files (x86)\Microsoft Office\Office*\ospp.vbs" -EA SilentlyContinue | Select-Object -First 1
+    $ospp = Get-ChildItem "C:\Program Files\Microsoft Office\Office*\ospp.vbs", "C:\Program Files (x86)\Microsoft Office\Office*\ospp.vbs" -EA SilentlyContinue | Select-Object -First 1
     if ($ospp) { Write-Host "`n-- Office --"; cscript //nologo $ospp.FullName /dstatus }
     else { Write-Host "(Khong tim thay OSPP.VBS)" }
     Write-Log "Xem ban quyen"; Pause-Return
@@ -763,9 +773,7 @@ function Remove-LicenseExceptMachine {
     Clear-Host; Write-Nav; Write-Host "=== GO BO BAN QUYEN (giu lai OEM digital license) ===" -ForegroundColor Cyan
     Write-Host "Se GO product key dang cai (MAK/KMS/Retail)." -ForegroundColor Yellow
     cscript //nologo "$env:windir\System32\slmgr.vbs" /dli
-    # Xac nhan lan 1: Y/N
     if (-not (Confirm-Action "Ban chac chan muon GO product key Windows?")) { return }
-    # Xac nhan lan 2: Enter
     Write-Host ""
     Write-Host "XAC NHAN LAN 2: Nhan Enter de TIEP TUC, ESC de HUY." -ForegroundColor Red
     $r2 = Read-Esc ""
@@ -809,10 +817,13 @@ function Menu-SystemInfo {
 function Get-FolderSizeMB {
     param([string]$P)
     try {
-        if ([string]::IsNullOrWhiteSpace($P) -or -not (Test-Path -LiteralPath $P -ErrorAction SilentlyContinue)) { return 0 }
-        $s = (Get-ChildItem -LiteralPath $P -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
-        if ($null -eq $s) { return 0 }
-        return [math]::Round($s / 1MB, 2)
+        if ([string]::IsNullOrWhiteSpace($P)) { return 0 }
+        if (-not (Test-Path -LiteralPath $P -EA SilentlyContinue)) { return 0 }
+        $items = Get-ChildItem -LiteralPath $P -Recurse -Force -EA SilentlyContinue
+        if ($null -eq $items) { return 0 }
+        $sum = ($items | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
+        if ($null -eq $sum) { return 0 }
+        return [math]::Round($sum / 1MB, 2)
     } catch {
         return 0
     }
@@ -844,22 +855,24 @@ function Invoke-CleanupFlow {
     $ffSize = 0
     if ($ffProfiles) { $ffProfiles | ForEach-Object { $ffSize += Get-FolderSizeMB "$($_.FullName)\cache2" } }
     if ($ffSize -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Firefox Cache", $ffSize); $total += $ffSize }
+    
     $thumbDir   = "$env:LOCALAPPDATA\Microsoft\Windows\Explorer"
-    $thumbFiles = @(Get-Item "$thumbDir\thumbcache_*.db","$thumbDir\iconcache_*.db" -EA SilentlyContinue)
+    $thumbFiles = @(Get-Item "$thumbDir\thumbcache_*.db", "$thumbDir\iconcache_*.db" -EA SilentlyContinue)
     $thumbMB    = [math]::Round(($thumbFiles | Measure-Object -Property Length -Sum).Sum / 1MB, 2)
     if ($thumbMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Thumbnail Cache", $thumbMB); $total += $thumbMB }
+    
     if ($Deep) {
         foreach ($k in $deepExtra.Keys) {
             $sz = Get-FolderSizeMB $deepExtra[$k]; $total += $sz
             Write-Host ("{0,-24} {1,8:F2} MB" -f $k, $sz)
         }
-        $rbMB = Get-FolderSizeMB "$env:SystemDrive\`$Recycle.Bin"
+        $rbMB = Get-FolderSizeMB "$($env:SystemDrive)\`$Recycle.Bin"
         Write-Host ("{0,-24} {1,8:F2} MB" -f "Recycle Bin", $rbMB);$total += $rbMB$dumpMB = 0
-        if (Test-Path "$env:windir\MEMORY.DMP") { $dumpMB = [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length/1MB,2) }
+        if (Test-Path "$env:windir\MEMORY.DMP") { $dumpMB = [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length / 1MB, 2) }
         if ($dumpMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Memory Dump", $dumpMB); $total +=$dumpMB }
     }
-    Write-Host ("-"*34)
-    Write-Host ("{0,-24} {1,8:F2} MB" -f "Potentially removable", [math]::Round($total,2)) -ForegroundColor Yellow$ans = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
+    Write-Host ("-" * 34)
+    Write-Host ("{0,-24} {1,8:F2} MB" -f "Potentially removable", [math]::Round($total, 2)) -ForegroundColor Yellow$ans = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
     if ($ans -eq $Global:ESC -or $ans.ToUpper() -ne "Y") { Pause-Return; return }
     Write-Host "`nDang don dep..." -ForegroundColor Cyan
     foreach ($k in$quickFolders.Keys) {
@@ -943,12 +956,12 @@ function Menu-PowerManagement {
     Show-Menu -Title "Power Management / Quan ly nguon dien" -Options ([ordered]@{
         "1"=@{Label="Power Plan Settings / Che do nguon dien";Action={Start-Process powercfg.cpl}}
         "2"=@{Label="Screen Timeout / Thoi gian tat man hinh";Action={Run-Task "Screen Timeout" {
-            $m=Read-Esc "So phut (0=khong bao gio, ESC huy): "
-            if($m -ne$Global:ESC){powercfg /change monitor-timeout-ac $m; powercfg /change monitor-timeout-dc$m}
+            $m = Read-Esc "So phut (0=khong bao gio, ESC huy): "
+            if ($m -ne$Global:ESC) { powercfg /change monitor-timeout-ac $m; powercfg /change monitor-timeout-dc$m }
         }}}
         "3"=@{Label="Sleep Timeout / Thoi gian ngu";Action={Run-Task "Sleep Timeout" {
-            $m=Read-Esc "So phut (0=khong bao gio, ESC huy): "
-            if($m -ne$Global:ESC){powercfg /change standby-timeout-ac $m; powercfg /change standby-timeout-dc$m}
+            $m = Read-Esc "So phut (0=khong bao gio, ESC huy): "
+            if ($m -ne$Global:ESC) { powercfg /change standby-timeout-ac $m; powercfg /change standby-timeout-dc$m }
         }}}
         "4"=@{Label="Lid Close Action / Hanh dong gap man hinh";Action={Start-Process powercfg.cpl}}
         "5"=@{Label="Power Button Action / Hanh dong nut nguon";Action={Start-Process powercfg.cpl}}
@@ -972,7 +985,9 @@ function Menu-PowerManagement {
             if ($c.ToUpper() -ne "Y") { return }
             $out = [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'energy-report.html')
             if (Test-Path $out) { Remove-Item$out -Force -EA SilentlyContinue }
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()$rs = [RunspaceFactory]::CreateRunspace(); $rs.Open()$psEnergy = [PowerShell]::Create(); $psEnergy.Runspace =$rs
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()$rs = [RunspaceFactory]::CreateRunspace()
+            $rs.Open()$psEnergy = [PowerShell]::Create()
+            $psEnergy.Runspace =$rs
             [void]$psEnergy.AddScript({
                 param($desk)
                 Push-Location $desk
@@ -1050,7 +1065,7 @@ function Menu-WindowsUpdate {
             Start-Process ms-settings:windowsupdate
         }}}
         "2"=@{Label="Open Windows Update / Mo cap nhat Windows";Action={Start-Process ms-settings:windowsupdate}}
-        "3"=@{Label="Windows Update Status / Trang thai cap nhat";Action={Run-Task "Update Status" {Get-Service wuauserv|Format-Table Name,Status,StartType}}}
+        "3"=@{Label="Windows Update Status / Trang thai cap nhat";Action={Run-Task "Update Status" {Get-Service wuauserv | Format-Table Name,Status,StartType}}}
         "4"=@{Label="Restart Update Services / Khoi dong lai dich vu";Action={Run-Task "Restart Services" {Restart-Service wuauserv,bits,cryptsvc -Force}}}
         "5"=@{Label="Reset Update Components / Dat lai thanh phan";Action={Run-Task "Reset Components" -NeedConfirm $true -ConfirmMsg "Se dat lai cache Windows Update." {
             Stop-Service wuauserv,bits,cryptsvc -Force -EA SilentlyContinue
@@ -1060,8 +1075,8 @@ function Menu-WindowsUpdate {
         }}}
         "6"=@{Label="Clear Update Cache / Xoa cache cap nhat";Action={Run-Task "Clear Cache" {Stop-Service wuauserv -Force; Remove-Item "$env:windir\SoftwareDistribution\Download\*" -Recurse -Force -EA SilentlyContinue; Start-Service wuauserv}}}
         "7"=@{Label="Check Pending Reboot / Kiem tra cho khoi dong lai";Action={Run-Task "Pending Reboot" {Write-Host "Can restart: $(Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')"}}}
-        "8"=@{Label="Update History / Lich su cap nhat";Action={Run-Task "Update History" {Get-HotFix|Sort-Object InstalledOn -Desc|Select-Object -First 20|Format-Table}}}
-        "9"=@{Label="Set Windows Update / Quan ly (UC20.exe)";Action={Clear-Host;Write-Host "=== SET WINDOWS UPDATE ===" -ForegroundColor Cyan;Run-UC20;Pause-Return}}
+        "8"=@{Label="Update History / Lich su cap nhat";Action={Run-Task "Update History" {Get-HotFix | Sort-Object InstalledOn -Desc | Select-Object -First 20 | Format-Table}}}
+        "9"=@{Label="Set Windows Update / Quan ly (UC20.exe)";Action={Clear-Host; Write-Host "=== SET WINDOWS UPDATE ===" -ForegroundColor Cyan; Run-UC20; Pause-Return}}
     })
 }
 
@@ -1069,10 +1084,10 @@ function Menu-Audio {
     Show-Menu -Title "Audio / Am thanh" -Options ([ordered]@{
         "1"=@{Label="Restart Windows Audio / Khoi dong lai am thanh";Action={Run-Task "Restart Audio" {Restart-Service Audiosrv -Force}}}
         "2"=@{Label="Restart Audio Endpoint Builder";Action={Run-Task "Restart Endpoint" {Restart-Service AudioEndpointBuilder -Force}}}
-        "3"=@{Label="List Playback Devices / Thiet bi phat";Action={Run-Task "Playback Devices" {Get-CimInstance Win32_SoundDevice|Format-Table Name,Status}}}
-        "4"=@{Label="List Recording Devices / Thiet bi ghi";Action={Run-Task "Recording Devices" {Get-PnpDevice -Class AudioEndpoint|Format-Table FriendlyName,Status}}}
+        "3"=@{Label="List Playback Devices / Thiet bi phat";Action={Run-Task "Playback Devices" {Get-CimInstance Win32_SoundDevice | Format-Table Name,Status}}}
+        "4"=@{Label="List Recording Devices / Thiet bi ghi";Action={Run-Task "Recording Devices" {Get-PnpDevice -Class AudioEndpoint | Format-Table FriendlyName,Status}}}
         "5"=@{Label="Default Playback/Microphone / Thiet bi mac dinh";Action={Start-Process mmsys.cpl}}
-        "6"=@{Label="Check Audio Driver / Kiem tra driver am thanh";Action={Run-Task "Audio Driver" {Get-CimInstance Win32_PnPSignedDriver|Where-Object{$_.DeviceClass -eq "MEDIA"}|Format-Table DeviceName,DriverVersion,DriverDate}}}
+        "6"=@{Label="Check Audio Driver / Kiem tra driver am thanh";Action={Run-Task "Audio Driver" {Get-CimInstance Win32_PnPSignedDriver | Where-Object{$_.DeviceClass -eq "MEDIA"} | Format-Table DeviceName,DriverVersion,DriverDate}}}
         "7"=@{Label="Open Sound Settings / Mo cai dat am thanh";Action={Start-Process ms-settings:sound}}
         "8"=@{Label="Audio Diagnostic / Chan doan am thanh";Action={Start-Process msdt.exe -ArgumentList "/id AudioPlaybackDiagnostic"}}
     })
@@ -1142,7 +1157,7 @@ function Menu-Maintenance {
 # 5. SOFTWARE
 # ============================================================
 function Open-Site {
-    param([string]$Name,[string]$Url,[bool]$IsPlaceholder=$false)
+    param([string]$Name, [string]$Url, [bool]$IsPlaceholder =$false)
     Clear-Host; Write-Nav; Write-Host "=== $Name ===" -ForegroundColor Cyan
     if ($IsPlaceholder) {
         Write-Host "Chua cau hinh URL cho '$Name'." -ForegroundColor Yellow
@@ -1179,93 +1194,36 @@ function Menu-OtherSoftware {
 }
 
 function Menu-Software {
-    [void]$Global:NavPath.Add("5")
-    try {
-        do {
-            Clear-Host
-            Write-Nav
-            Write-Host "===== 5. SOFTWARE / PHAN MEM =====" -ForegroundColor Cyan
-            Write-Host ""
-            Write-Host "-- LIEN LAC / COMMUNICATION --" -ForegroundColor Yellow
-            Write-Host "1. Zalo PC"
-            Write-Host "2. Zoom"
-            Write-Host "3. Telegram"
-            Write-Host "4. WeChat"
-            Write-Host "5. KakaoTalk"
-            Write-Host ""
-            Write-Host "-- TRINH DUYET / BROWSER --" -ForegroundColor Yellow
-            Write-Host "6. Google Chrome"
-            Write-Host "7. Coc Coc"
-            Write-Host ""
-            Write-Host "-- OFFICE / VAN PHONG --" -ForegroundColor Yellow
-            Write-Host "8.  Cai dat font chu Viet Nam (1398.exe)"
-            Write-Host "9.  Unikey"
-            Write-Host "10. Office 365"
-            Write-Host "11. WPS Office"
-            Write-Host "12. LibreOffice"
-            Write-Host "13. Foxit PDF Reader"
-            Write-Host "14. PDFgear (Edit PDF)"
-            Write-Host ""
-            Write-Host "-- MEDIA & TRUYEN THONG --" -ForegroundColor Yellow
-            Write-Host "15. VLC"
-            Write-Host "16. CapCut"
-            Write-Host "17. OBS Studio"
-            Write-Host ""
-            Write-Host "-- CONG CU HE THONG / SYSTEM TOOLS --" -ForegroundColor Yellow
-            Write-Host "18. WinRAR"
-            Write-Host "19. ImageGlass"
-            Write-Host "20. AnyDesk"
-            Write-Host "21. UltraViewer"
-            Write-Host "22. Man hinh cho Fliqlo"
-            Write-Host "23. Bing Wallpaper"
-            Write-Host "24. Crystal Disk Info"
-            Write-Host "25. Recoverit"
-            Write-Host "26. MiniTool Partition Wizard"
-            Write-Host "27. Double Driver"
-            Write-Host ""
-            Write-Host "-- PHAN MEM KHAC / OTHER --" -ForegroundColor Yellow
-            Write-Host "99. Office AIO / AutoCAD / WinToHDD"
-            Write-Host ""
-            Write-Host "0. Back"
-            $c = Read-Esc "Chon: "
-            if ($c -eq $Global:ESC -or$c -eq "0") { break }
-            [void]$Global:NavPath.Add($c)
-            try {
-                switch ($c) {
-                    "1"  { Open-Site "Zalo PC"                   "https://zalo.me/pc" }
-                    "2"  { Open-Site "Zoom"                      "https://zoom.us/download" }
-                    "3"  { Open-Site "Telegram"                  "https://telegram.org/dl/desktop/win" }
-                    "4"  { Open-Site "WeChat"                    "https://www.wechat.com/en/" }
-                    "5"  { Open-Site "KakaoTalk"                 "https://www.kakaocorp.com/page/service/all?lang=ENG" }
-                    "6"  { Open-Site "Google Chrome"             "https://www.google.com/chrome/" }
-                    "7"  { Open-Site "Coc Coc"                   "https://coccoc.com/download" }
-                    "8"  { Run-FontViet }
-                    "9"  { Open-Site "Unikey"                    "https://www.unikey.org/download.html" }
-                    "10" { Open-Site "Office 365"                "https://www.microsoft.com/en-us/microsoft-365/try" }
-                    "11" { Open-Site "WPS Office"                "https://www.wps.com/download/" }
-                    "12" { Open-Site "LibreOffice"               "https://www.libreoffice.org/download/download/" }
-                    "13" { Open-Site "Foxit PDF Reader"          "https://www.foxit.com/pdf-reader/" }
-                    "14" { Open-Site "PDFgear"                   "https://pdfgear.com/pdfgear-for-windows/" }
-                    "15" { Open-Site "VLC"                       "https://www.videolan.org/vlc/download-windows.html" }
-                    "16" { Open-Site "CapCut"                    "https://www.capcut.com/tools/pc-video-editor" }
-                    "17" { Open-Site "OBS Studio"                "https://obsproject.com/download" }
-                    "18" { Open-Site "WinRAR"                    "https://www.rarlab.com/download.htm" }
-                    "19" { Open-Site "ImageGlass"                "https://imageglass.org/" }
-                    "20" { Open-Site "AnyDesk"                   "https://anydesk.com/en/downloads/windows" }
-                    "21" { Open-Site "UltraViewer"               "https://www.ultraviewer.net/en/download.html" }
-                    "22" { Open-Site "Fliqlo Screensaver"        "https://fliqlo.com/screensaver/" }
-                    "23" { Open-Site "Bing Wallpaper"            "https://www.microsoft.com/en-us/bing/bing-wallpaper" }
-                    "24" { Open-Site "Crystal Disk Info"         "https://crystalmark.info/en/download/" }
-                    "25" { Open-Site "Recoverit"                 "https://recoverit.wondershare.com/" }
-                    "26" { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" }
-                    "27" { Open-Site "Double Driver"             "https://download.com.vn/double-driver-25157" }
-                    "99" { Menu-OtherSoftware }
-                }
-            } finally {
-                if ($Global:NavPath.Count -gt 0) {$Global:NavPath.RemoveAt($Global:NavPath.Count-1) }             }         } while ($true)
-    } finally {
-        if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
-    }
+    Show-Menu -Title "5. SOFTWARE / PHAN MEM" -NavEntry "5" -Options ([ordered]@{
+        "1"  =@{Label="Zalo PC"; Action={Open-Site "Zalo PC" "https://zalo.me/pc"}}
+        "2"  =@{Label="Zoom"; Action={Open-Site "Zoom" "https://zoom.us/download"}}
+        "3"  =@{Label="Telegram"; Action={Open-Site "Telegram" "https://telegram.org/dl/desktop/win"}}
+        "4"  =@{Label="WeChat"; Action={Open-Site "WeChat" "https://www.wechat.com/en/"}}
+        "5"  =@{Label="KakaoTalk"; Action={Open-Site "KakaoTalk" "https://www.kakaocorp.com/page/service/all?lang=ENG"}}
+        "6"  =@{Label="Google Chrome"; Action={Open-Site "Google Chrome" "https://www.google.com/chrome/"}}
+        "7"  =@{Label="Coc Coc"; Action={Open-Site "Coc Coc" "https://coccoc.com/download"}}
+        "8"  =@{Label="Cai dat font chu Viet Nam (1398.exe)"; Action={Run-FontViet}}
+        "9"  =@{Label="Unikey"; Action={Open-Site "Unikey" "https://www.unikey.org/download.html"}}
+        "10" =@{Label="Office 365"; Action={Open-Site "Office 365" "https://www.microsoft.com/en-us/microsoft-365/try"}}
+        "11" =@{Label="WPS Office"; Action={Open-Site "WPS Office" "https://www.wps.com/download/"}}
+        "12" =@{Label="LibreOffice"; Action={Open-Site "LibreOffice" "https://www.libreoffice.org/download/download/"}}
+        "13" =@{Label="Foxit PDF Reader"; Action={Open-Site "Foxit PDF Reader" "https://www.foxit.com/pdf-reader/"}}
+        "14" =@{Label="PDFgear (Edit PDF)"; Action={Open-Site "PDFgear" "https://pdfgear.com/pdfgear-for-windows/"}}
+        "15" =@{Label="VLC"; Action={Open-Site "VLC" "https://www.videolan.org/vlc/download-windows.html"}}
+        "16" =@{Label="CapCut"; Action={Open-Site "CapCut" "https://www.capcut.com/tools/pc-video-editor"}}
+        "17" =@{Label="OBS Studio"; Action={Open-Site "OBS Studio" "https://obsproject.com/download"}}
+        "18" =@{Label="WinRAR"; Action={Open-Site "WinRAR" "https://www.rarlab.com/download.htm"}}
+        "19" =@{Label="ImageGlass"; Action={Open-Site "ImageGlass" "https://imageglass.org/"}}
+        "20" =@{Label="AnyDesk"; Action={Open-Site "AnyDesk" "https://anydesk.com/en/downloads/windows"}}
+        "21" =@{Label="UltraViewer"; Action={Open-Site "UltraViewer" "https://www.ultraviewer.net/en/download.html"}}
+        "22" =@{Label="Fliqlo Screensaver"; Action={Open-Site "Fliqlo Screensaver" "https://fliqlo.com/screensaver/"}}
+        "23" =@{Label="Bing Wallpaper"; Action={Open-Site "Bing Wallpaper" "https://www.microsoft.com/en-us/bing/bing-wallpaper"}}
+        "24" =@{Label="Crystal Disk Info"; Action={Open-Site "Crystal Disk Info" "https://crystalmark.info/en/download/"}}
+        "25" =@{Label="Recoverit"; Action={Open-Site "Recoverit" "https://recoverit.wondershare.com/"}}
+        "26" =@{Label="MiniTool Partition Wizard"; Action={Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html"}}
+        "27" =@{Label="Double Driver"; Action={Open-Site "Double Driver" "https://download.com.vn/double-driver-25157"}}
+        "99" =@{Label="Office AIO / AutoCAD / WinToHDD"; Action={Menu-OtherSoftware}}
+    })
 }
 
 # ============================================================
