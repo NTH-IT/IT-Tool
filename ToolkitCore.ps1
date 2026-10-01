@@ -15,7 +15,8 @@ function Write-Nav {
 
 function Write-Log { 
     param([string]$M)
-    Add-Content -Path $LogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $env:USERNAME | $M" 
+    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $env:USERNAME | $M`r`n"
+    [System.IO.File]::AppendAllText($LogFile, $line)
 }
 
 function Test-IsAdmin {
@@ -142,32 +143,41 @@ function Pause-Return {
 function Download-WithProgress {
     param([string]$Url, [string]$Dest, [string]$Name)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $wc = New-Object System.Net.WebClient
+    $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
     try {
-        $job = Start-Job -ScriptBlock {
-            param($u, $d)
-            $wc = New-Object System.Net.WebClient
-            $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            $wc.DownloadFile($u, $d)
-        } -ArgumentList $Url, $Dest
+        $uri = New-Object System.Uri($Url)
+        $task = $wc.DownloadFileTaskAsync($uri, $Dest)
         $spin = @('|', '/', '-', '\'); $si = 0
-        while ($job.State -eq 'Running') {
+        while (-not $task.IsCompleted) {
             $sz = if (Test-Path $Dest) { [math]::Round((Get-Item $Dest).Length / 1MB, 1) } else { 0 }
             Write-Host -NoNewline "`rDang tai $Name`: $($spin[$si%4]) $sz MB - $([math]::Round($sw.Elapsed.TotalSeconds,1))s  "
-            $si++; Start-Sleep -Milliseconds 300
+            $si++; Start-Sleep -Milliseconds 200
         }
-        Write-Host ""; Receive-Job $job -EA SilentlyContinue | Out-Null; Remove-Job $job -Force -EA SilentlyContinue; $sw.Stop()
+        if ($task.IsFaulted) { throw $task.Exception.InnerException }
+        Write-Host ""
+        $sw.Stop()
         if ((Test-Path $Dest) -and (Get-Item $Dest).Length -gt 100000) {
-            Write-Host "Da tai xong: $([math]::Round((Get-Item $Dest).Length/1MB,1)) MB" -ForegroundColor Green; return $true
+            Write-Host "Da tai xong: $([math]::Round((Get-Item $Dest).Length/1MB,1)) MB" -ForegroundColor Green
+            return $true
         }
-        Write-Host "Loi: file tai ve khong hop le (co the link het han)." -ForegroundColor Red; return $false
+        Write-Host "Loi: file tai ve khong hop le (co the link het han)." -ForegroundColor Red
+        return $false
     } catch {
-        Get-Job -EA SilentlyContinue | Remove-Job -Force -EA SilentlyContinue
-        Write-Host "Loi: $_" -ForegroundColor Red; return $false
+        Write-Host ""
+        Write-Host "Loi: $_" -ForegroundColor Red
+        return $false
+    } finally {
+        $wc.Dispose()
     }
 }
 
 function Show-Menu {
-    param([string]$Title, $Options, [string]$NavEntry = "")
+    param(
+        [string]$Title,
+        $Options,
+        [string]$NavEntry = ""
+    )
     if ($NavEntry) { [void]$Global:NavPath.Add($NavEntry) }
     try {
         do {
@@ -178,7 +188,7 @@ function Show-Menu {
             Write-Host "0. Back"
             $c = Read-Esc "Chon: "
             if ($c -eq $Global:ESC -or $c -eq "0") { break }
-            if ($Options.Contains($c)) {
+            if ($Options.ContainsKey($c)) {
                 [void]$Global:NavPath.Add($c)
                 try {
                     & $Options[$c].Action
@@ -188,12 +198,19 @@ function Show-Menu {
             }
         } while ($true)
     } finally {
-        if ($NavEntry -and $Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count - 1) }
+        if ($NavEntry -and $Global:NavPath.Count -gt 0) {
+            $Global:NavPath.RemoveAt($Global:NavPath.Count - 1)
+        }
     }
 }
 
 function Run-Task {
-    param([string]$Title, [scriptblock]$Action, [bool]$NeedConfirm = $false, [string]$ConfirmMsg = "")
+    param(
+        [Parameter(Position=0, Mandatory=$true)][string]$Title,
+        [Parameter(Position=1, Mandatory=$true)][scriptblock]$Action,
+        [switch]$NeedConfirm,
+        [string]$ConfirmMsg = ""
+    )
     Clear-Host; Write-Nav; Write-Host "=== $Title ===" -ForegroundColor Cyan
     if ($NeedConfirm -and (-not (Confirm-Action $ConfirmMsg))) { return 1 }
     $exitCode = 0
@@ -224,59 +241,69 @@ function Show-NetworkInfo {
     Write-Host "Domain/Workgroup  : $($cs.Domain)"
     Write-Host "PartOfDomain      : $($cs.PartOfDomain)"
     Write-Host ""
-    Get-NetIPConfiguration | ForEach-Object {
+
+    $allAdapters = @(Get-NetAdapter -EA SilentlyContinue)
+    $upAdapters  = @($allAdapters | Where-Object Status -eq 'Up')
+
+    Get-NetIPConfiguration -EA SilentlyContinue | ForEach-Object {
         Write-Host "-- Adapter: $($_.InterfaceAlias) --"
         Write-Host "  IPv4    : $($_.IPv4Address.IPAddress)"
         Write-Host "  Gateway : $($_.IPv4DefaultGateway.NextHop)"
         Write-Host "  DNS     : $($_.DNSServer.ServerAddresses -join ', ')"
     }
-    Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { Write-Host "  MAC ($($_.Name)): $($_.MacAddress)" }
+    foreach ($a in $upAdapters) {
+        Write-Host "  MAC ($($a.Name)): $($a.MacAddress)"
+    }
 
     Write-Host "`n--- DANG CHAY QUICK NETWORK TEST ---" -ForegroundColor Cyan
-    $adapters = @(Get-NetAdapter | Where-Object Status -eq 'Up')
-    if ($adapters.Count -eq 0) {
+    if ($upAdapters.Count -eq 0) {
         Write-Host "[X] KHONG CO ADAPTER MANG NAO DANG KET NOI!" -ForegroundColor Red
         Write-Log "Xem thong tin mang & Quick Test - No Adapter Up"
         Pause-Return
         return
     }
 
-    $idxNum =$adapters[0].InterfaceIndex
-    $adapter   =$adapters[0]
-    $ipConfig  = Get-NetIPConfiguration -InterfaceIndex$idxNum
-    $adIP      =$ipConfig.IPv4Address.IPAddress
-    $adGW      =$ipConfig.IPv4DefaultGateway.NextHop
+    $adapter   = $upAdapters[0]
+    $idxNum    = $adapter.InterfaceIndex
+    $ipConfig  = Get-NetIPConfiguration -InterfaceIndex $idxNum -EA SilentlyContinue
+    $adIP      = $ipConfig.IPv4Address.IPAddress
+    $adGW      = $ipConfig.IPv4DefaultGateway.NextHop
 
     # 1. Adapter
-    $ok1 =$adapter.Status -eq 'Up'
+    $ok1 = $adapter.Status -eq 'Up'
     Write-Host ("[{0}] Adapter    : {1} ({2})" -f $(if($ok1){"OK"}else{"X"}), $adapter.Name, $adapter.Status) -ForegroundColor $(if($ok1){'Green'}else{'Red'})
 
     # 2. IP
-    $ok2 = $null -ne$adIP
+    $ok2 = $null -ne $adIP
     Write-Host ("[{0}] IP Address : {1}" -f $(if($ok2){"OK"}else{"X"}), $(if($ok2){$adIP}else{"Khong co IP"})) -ForegroundColor $(if($ok2){'Green'}else{'Red'})
 
     # 3. Gateway ping
     $ok3 = $false; $gwMs = 0
     if ($adGW) {
-        $r = Test-Connection -ComputerName$adGW -Count 1 -EA SilentlyContinue
-        $ok3 =$null -ne $r; $gwMs = if($ok3){$r.ResponseTime}else{0}
-        Write-Host ("[{0}] Gateway    : {1} {2}" -f $(if($ok3){"OK"}else{"X"}), $adGW,$(if($ok3){"-> Ping ${gwMs}ms"}else{"-> KHONG PING DUOC"})) -ForegroundColor $(if($ok3){'Green'}else{'Yellow'})
+        $r = Test-Connection -ComputerName $adGW -Count 1 -EA SilentlyContinue
+        $ok3 = $null -ne $r
+        $gwMs = if($ok3){ $r.ResponseTime } else { 0 }
+        Write-Host ("[{0}] Gateway    : {1} {2}" -f $(if($ok3){"OK"}else{"X"}), $adGW, $(if($ok3){"-> Ping ${gwMs}ms"}else{"-> KHONG PING DUOC"})) -ForegroundColor $(if($ok3){'Green'}else{'Yellow'})
     } else {
         Write-Host "[!] Gateway    : Khong co Gateway" -ForegroundColor Yellow
     }
 
     # 4. DNS
     $ok4 = $false; $dnsIp = ""
-    try { $r4 = [System.Net.Dns]::GetHostAddresses("google.com"); $ok4 =$r4.Count -gt 0; $dnsIp =$r4[0].IPAddressToString } catch {}
+    try {
+        $r4 = [System.Net.Dns]::GetHostAddresses("google.com")
+        $ok4 = $r4.Count -gt 0
+        $dnsIp = $r4[0].IPAddressToString
+    } catch {}
     Write-Host ("[{0}] DNS        : {1}" -f $(if($ok4){"OK"}else{"X"}), $(if($ok4){"Resolve google.com -> $dnsIp"}else{"KHONG RESOLVE DUOC -> kiem tra DNS"})) -ForegroundColor $(if($ok4){'Green'}else{'Red'})
 
     # 5. Internet
     $r5 = Test-Connection -ComputerName "8.8.8.8" -Count 1 -EA SilentlyContinue
-    $ok5 = $null -ne$r5
+    $ok5 = $null -ne $r5
     Write-Host ("[{0}] Internet   : {1}" -f $(if($ok5){"OK"}else{"X"}), $(if($ok5){"8.8.8.8 -> Reachable ($($r5.ResponseTime)ms)"}else{"KHONG KET NOI INTERNET"})) -ForegroundColor $(if($ok5){'Green'}else{'Red'})
 
-    Write-Host ""; Write-Host ("-"*48) -ForegroundColor Cyan
-    $allOk = $ok1 -and$ok2 -and $ok4 -and$ok5
+    Write-Host ""; Write-Host ("-" * 48) -ForegroundColor Cyan
+    $allOk = $ok1 -and $ok2 -and $ok4 -and $ok5
     if ($allOk) { Write-Host "  Ket qua : TAT CA BINH THUONG" -ForegroundColor Green }
     else        { Write-Host "  Ket qua : CO LOI - Xem huong dan tren" -ForegroundColor Red }
 
@@ -292,7 +319,7 @@ function Set-ComputerNameDomain {
     Write-Host "0. Quay lai"
     Write-Host ""
     $c = Read-Esc "Chon chuc nang: "
-    if ($c -eq $Global:ESC -or$c -eq "0") { return }
+    if ($c -eq $Global:ESC -or $c -eq "0") { return }
 
     switch ($c) {
         "1" {
@@ -304,21 +331,22 @@ function Set-ComputerNameDomain {
                 Write-Log "Doi hostname: $newName"
                 Write-Host "Da doi ten may thanh cong. Vui long khoi dong lai may." -ForegroundColor Green
             } catch {
-                Write-Log "Doi hostname $newName LOI:$_"
+                Write-Log "Doi hostname $newName LOI: $_"
                 Write-Host "Loi doi ten may: $_" -ForegroundColor Red
             }
         }
         "2" {
             $newDom = Read-Esc "Ten Domain moi (ESC de huy): "
-            if ($newDom -eq$Global:ESC -or [string]::IsNullOrWhiteSpace($newDom)) { return }$cred = Get-Credential -Message "Nhap tai khoan quan tri Domain de join '$newDom'"
-            if ($null -eq$cred) { return }
+            if ($newDom -eq $Global:ESC -or [string]::IsNullOrWhiteSpace($newDom)) { return }
+            $cred = Get-Credential -Message "Nhap tai khoan quan tri Domain de join '$newDom'"
+            if ($null -eq $cred) { return }
             if (-not (Confirm-Action "Gia nhap domain '$newDom' (can khoi dong lai)?")) { return }
             try {
-                Add-Computer -DomainName $newDom.Trim() -Credential$cred -Force -ErrorAction Stop
+                Add-Computer -DomainName $newDom.Trim() -Credential $cred -Force -ErrorAction Stop
                 Write-Log "Join domain: $newDom"
                 Write-Host "Da join domain $newDom thanh cong. Vui long khoi dong lai may." -ForegroundColor Green
             } catch {
-                Write-Log "Join domain $newDom LOI:$_"
+                Write-Log "Join domain $newDom LOI: $_"
                 Write-Host "Loi join domain: $_" -ForegroundColor Red
             }
         }
@@ -331,7 +359,7 @@ function Set-ComputerNameDomain {
                 Write-Log "Doi workgroup: $newWg"
                 Write-Host "Da doi Workgroup thanh cong. Vui long khoi dong lai may." -ForegroundColor Green
             } catch {
-                Write-Log "Doi workgroup $newWg LOI:$_"
+                Write-Log "Doi workgroup $newWg LOI: $_"
                 Write-Host "Loi doi workgroup: $_" -ForegroundColor Red
             }
         }
@@ -348,11 +376,13 @@ function Reset-IPAddress {
 
 function Set-StaticIP {
     Clear-Host; Write-Nav; Write-Host "=== DAT IP TINH ===" -ForegroundColor Cyan
-    $idx = Select-NetIdx; if ($null -eq $idx) { return }$ip = Read-IPEsc "Dia chi IP (vd: 192.168.1.50)"; if ($ip -eq $Global:ESC) { return }$prefixRaw = Read-Esc "Prefix / Subnet mask (mac dinh 24 / 255.255.255.0, Enter dung mac dinh): "
-    if ($prefixRaw -eq$Global:ESC) { return }
-    $prefix = Get-PrefixLength$prefixRaw
+    $idx = Select-NetIdx; if ($null -eq $idx) { return }
+    $ip = Read-IPEsc "Dia chi IP (vd: 192.168.1.50)"; if ($ip -eq $Global:ESC) { return }
+    $prefixRaw = Read-Esc "Prefix / Subnet mask (mac dinh 24 / 255.255.255.0, Enter dung mac dinh): "
+    if ($prefixRaw -eq $Global:ESC) { return }
+    $prefix = Get-PrefixLength $prefixRaw
     if ($prefix -lt 0) { Write-Host "Gia tri khong hop le."; Pause-Return; return }
-    $gw = Read-IPEsc "Default Gateway (vd: 192.168.1.1)"; if ($gw -eq$Global:ESC) { return }
+    $gw = Read-IPEsc "Default Gateway (vd: 192.168.1.1)"; if ($gw -eq $Global:ESC) { return }
     Write-Host "`nSe dat: $ip /$prefix  GW: $gw  tren interface $idx" -ForegroundColor Yellow
     if (-not (Confirm-Action "Tiep tuc?")) { return }
     try {
@@ -433,13 +463,12 @@ function Invoke-PingTool {
     Clear-Host; Write-Nav; Write-Host "=== PING ===" -ForegroundColor Cyan
     Write-Host ""
     $target = Read-Esc "Nhap target (IP hoac domain): "
-    if ($target -eq $Global:ESC -or$target -eq "") { return }
+    if ($target -eq $Global:ESC -or $target -eq "") { return }
     $cntStr = Read-Esc "So goi (mac dinh 10, Enter = 10): "
-    if ($cntStr -eq$Global:ESC) { return }
+    if ($cntStr -eq $Global:ESC) { return }
     [int]$cnt = if ($cntStr -match "^\d+$" -and [int]$cntStr -gt 0) { [int]$cntStr } else { 10 }
 
-    $isLAN = ($target -match "^(10\.\vert{}192\.168\.\vert{}172\.(1[6-9]\vert{}2[0-9]\vert{}3[01])\.)\vert{}^localhost$|^127\.") `
-             -or ($target -match "^[a-zA-Z0-9_-]+$")
+    $isLAN = ($target -match '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)') -or ($target -match '^(localhost|127\.)') -or ($target -notmatch '\.')
 
     Clear-Host; Write-Nav; Write-Host "=== PING ===" -ForegroundColor Cyan
     Write-Host "Target : $target  [$(if($isLAN){'LAN'}else{'WAN/Internet'})]"
@@ -521,26 +550,37 @@ function Invoke-NetworkQuality {
     $latencies = [System.Collections.Generic.List[int]]::new()
     $jitters   = [System.Collections.Generic.List[double]]::new()
     $lost = 0; $total = 0; $prevMs = -1; $ti = 0; $duration = 60
+    $pinger = [System.Net.NetworkInformation.Ping]::new()
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
-    while ($sw.Elapsed.TotalSeconds -lt $duration) {
-        $tgt = $targets[$ti % 2]; $ti++; $total++
-        $r = Test-Connection -ComputerName $tgt -Count 1 -EA SilentlyContinue
-        $elapsedS = [int]$sw.Elapsed.TotalSeconds
-        $pct  = [math]::Min(100, [math]::Round($elapsedS / $duration * 100))
-        $fill = [int]($pct / 5)
-        $bar  = "#" * $fill + "-" * (20 - $fill)
-        if ($r) {
-            $ms = $r.ResponseTime
-            $latencies.Add($ms)
-            if ($prevMs -ge 0) { $jitters.Add([math]::Abs($ms - $prevMs)) }
-            $prevMs = $ms
-            Write-Host -NoNewline "`r  [$bar] $pct\%$total goi  ${tgt}:${ms}ms     "
-        } else {
-            $lost++
-            Write-Host -NoNewline "`r  [$bar] $pct%  $total goi  ${tgt}: TIMEOUT    "
+    try {
+        while ($sw.Elapsed.TotalSeconds -lt $duration) {
+            $tgt = $targets[$ti % 2]; $ti++; $total++
+            $elapsedS = [int]$sw.Elapsed.TotalSeconds
+            $pct  = [math]::Min(100, [math]::Round($elapsedS / $duration * 100))
+            $fill = [int]($pct / 5)
+            $bar  = "#" * $fill + "-" * (20 - $fill)
+
+            try {
+                $task = $pinger.SendPingAsync($tgt, 500)
+                if ($task.Wait(500) -and $task.Result.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) {
+                    $ms = [int]$task.Result.RoundtripTime
+                    $latencies.Add($ms)
+                    if ($prevMs -ge 0) { $jitters.Add([math]::Abs($ms - $prevMs)) }
+                    $prevMs = $ms
+                    Write-Host -NoNewline ("`r  [{0}] {1}%  {2} goi  {3}:{4}ms     " -f $bar, $pct, $total, $tgt, $ms)
+                } else {
+                    $lost++
+                    Write-Host -NoNewline ("`r  [{0}] {1}%  {2} goi  {3}: TIMEOUT    " -f $bar, $pct, $total, $tgt)
+                }
+            } catch {
+                $lost++
+                Write-Host -NoNewline ("`r  [{0}] {1}%  {2} goi  {3}: TIMEOUT    " -f $bar, $pct, $total, $tgt)
+            }
+            Start-Sleep -Milliseconds 700
         }
-        Start-Sleep -Milliseconds 700
+    } finally {
+        $pinger.Dispose()
     }
     Write-Host ""; Write-Host ""
 
@@ -690,15 +730,14 @@ function Show-SoftwareInfo {
 
 function Show-HardwareInfoFull {
     Clear-Host; Write-Nav; Write-Host "=== THONG TIN PHAN CUNG ===" -ForegroundColor Cyan
-    $cs = Get-CimInstance Win32_ComputerSystem; $p = Get-CimInstance Win32_ComputerSystemProduct
-    $b  = Get-CimInstance Win32_BIOS; $os = Get-CimInstance Win32_OperatingSystem
+    $cs = Get-CimInstance Win32_ComputerSystem; $p = Get-CimInstance Win32_ComputerSystemProduct$b  = Get-CimInstance Win32_BIOS; $os = Get-CimInstance Win32_OperatingSystem
     Write-Host "Hang san xuat : $($cs.Manufacturer)"
     Write-Host "Model may     : $($p.Name)"
     Write-Host "Serial number : $($p.IdentifyingNumber)"
     Write-Host "UUID          : $($p.UUID)"
     Write-Host "BIOS Version  : $($b.SMBIOSBIOSVersion)"
     Write-Host "BIOS Date     : $($b.ReleaseDate)"
-    $up = (Get-Date) - $os.LastBootUpTime; Write-Host "Uptime        : $($up.Days)d $($up.Hours)h $($up.Minutes)m"
+    $up = (Get-Date) -$os.LastBootUpTime; Write-Host "Uptime        : $($up.Days)d $($up.Hours)h $($up.Minutes)m"
     Write-Host "`n--- CPU ---" -ForegroundColor Yellow
     $cpu = Get-CimInstance Win32_Processor
     Write-Host "Ten             : $($cpu.Name)"
@@ -713,18 +752,17 @@ function Show-HardwareInfoFull {
     Write-Host "`n--- RAM ---" -ForegroundColor Yellow
     $slotUsed = 0
     Get-CimInstance Win32_PhysicalMemory | ForEach-Object {
-        $slotUsed++
-        $ddrName = if ($DDR_MAP.ContainsKey([int]$_.SMBIOSMemoryType)) { $DDR_MAP[[int]$_.SMBIOSMemoryType] } else { "Unknown(code=$($_.SMBIOSMemoryType))" }
+        $slotUsed++$ddrName = if ($DDR_MAP.ContainsKey([int]$_.SMBIOSMemoryType)) { $DDR_MAP[[int]$_.SMBIOSMemoryType] } else { "Unknown(code=$($_.SMBIOSMemoryType))" }
         $ffName  = if ($FF_MAP.ContainsKey([int]$_.FormFactor)) { $FF_MAP[[int]$_.FormFactor] } else { "Code=$($_.FormFactor)" }
-        Write-Host "Slot $($_.DeviceLocator): $([math]::Round($_.Capacity/1GB,2)) GB | $ddrName | $($_.Speed) MHz | $ffName | Mfr: $($_.Manufacturer)"
+        Write-Host "Slot $($_.DeviceLocator): $([math]::Round($_.Capacity/1GB,2)) GB | $ddrName \vert{}$($_.Speed) MHz \vert{}$ffName | Mfr: $($_.Manufacturer)"
     }
     Write-Host "Slot dang dung  : $slotUsed"
     Write-Host "`n--- O CUNG ---" -ForegroundColor Yellow
     Get-PhysicalDisk | ForEach-Object { Write-Host "O dia : $($_.FriendlyName) | Health: $($_.HealthStatus) | $([math]::Round($_.Size/1GB,2)) GB" }
     Get-Volume | Where-Object DriveLetter | ForEach-Object {
-        $letter =$_.DriveLetter; $free = [math]::Round($_.SizeRemaining/1GB,2); $total = [math]::Round($_.Size/1GB,2)
-        $part = Get-Partition \vert{} Where-Object DriveLetter -eq$letter | Select-Object -First 1
-        Write-Host "  Drive ${letter}: | Free: ${free} /${total} GB | Type: $($part.Type)"
+        $letter = $_.DriveLetter; $free = [math]::Round($_.SizeRemaining/1GB,2); $total = [math]::Round($_.Size/1GB,2)
+        $part = Get-Partition | Where-Object DriveLetter -eq $letter | Select-Object -First 1
+        Write-Host "  Drive ${letter}: | Free: ${free} / ${total} GB | Type: $($part.Type)"
     }
     Write-Host "`n--- GPU / VGA ---" -ForegroundColor Yellow
     Get-CimInstance Win32_VideoController | ForEach-Object {
@@ -733,9 +771,9 @@ function Show-HardwareInfoFull {
     Write-Host "--- MAN HINH ---" -ForegroundColor Yellow
     try {
         Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorID -EA Stop | ForEach-Object {
-            $name = ($_.UserFriendlyName | Where-Object { $_ -ne 0 } | ForEach-Object { [char]$_ }) -join ""
-            $sn   = ($_.SerialNumberID     | Where-Object { $_ -ne 0 } | ForEach-Object { [char]$_ }) -join ""
-            Write-Host "EDID: $name | Serial: $sn"
+            $name = ($_.UserFriendlyName | Where-Object { $_ -ne 0 } \vert{} ForEach-Object { [char]$_ }) -join ""
+            $sn   = ($_.SerialNumberID     | Where-Object { $_ -ne 0 } \vert{} ForEach-Object { [char]$_ }) -join ""
+            Write-Host "EDID: $name \vert{} Serial:$sn"
         }
     } catch { Write-Host "(Khong doc WmiMonitorID)" }
     Get-CimInstance Win32_VideoController | ForEach-Object { Write-Host "Resolution: $($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution) | Refresh: $($_.CurrentRefreshRate) Hz" }
@@ -747,9 +785,8 @@ function Show-HardwareInfoFull {
     Write-Host "`n--- PIN LAPTOP ---" -ForegroundColor Yellow
     $bat = Get-CimInstance Win32_Battery
     if ($bat) {
-        foreach ($bx in $bat) {
-            $st = if ($BAT_MAP.ContainsKey([int]$bx.BatteryStatus)) { $BAT_MAP[[int]$bx.BatteryStatus] } else { "Code=$($bx.BatteryStatus)" }
-            Write-Host "Ten: $($bx.Name) | Sac: $($bx.EstimatedChargeRemaining)% | Trang thai: $st"
+        foreach ($bx in $bat) {$st = if ($BAT_MAP.ContainsKey([int]$bx.BatteryStatus)) { $BAT_MAP[[int]$bx.BatteryStatus] } else { "Code=$($bx.BatteryStatus)" }
+            Write-Host "Ten: $($bx.Name) \vert{} Sac:$($bx.EstimatedChargeRemaining)\% \vert{} Trang thai:$st"
         }
         try {
             Get-CimInstance -Namespace root\wmi -ClassName BatteryStaticData -EA Stop | ForEach-Object {
@@ -777,7 +814,7 @@ function Remove-LicenseExceptMachine {
     Write-Host ""
     Write-Host "XAC NHAN LAN 2: Nhan Enter de TIEP TUC, ESC de HUY." -ForegroundColor Red
     $r2 = Read-Esc ""
-    if ($r2 -eq$Global:ESC) { Write-Host "Da huy."; Pause-Return; return }
+    if ($r2 -eq $Global:ESC) { Write-Host "Da huy."; Pause-Return; return }
     cscript //nologo "$env:windir\System32\slmgr.vbs" /upk
     cscript //nologo "$env:windir\System32\slmgr.vbs" /cpky
     Write-Log "Da go product key Windows"
@@ -790,8 +827,8 @@ function Run-CanchinhOffice {
     Clear-Host; Write-Nav; Write-Host "=== THIET LAP OFFICE (CanchinhOffice.exe) ===" -ForegroundColor Cyan
     $url = "https://www.dropbox.com/scl/fi/5mrj2a0mikqnlw7ioaxm1/CanchinhOffice.exe?rlkey=x21xpu6osowzz1oqyg2sryeg6&st=3zvg6nye&dl=1"
     $path = "$env:TEMP\CanchinhOffice_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
-    $ok = Download-WithProgress -Url $url -Dest $path -Name "CanchinhOffice.exe"
-    if ($ok -and (Test-Path $path)) {
+    $ok = Download-WithProgress -Url $url -Dest$path -Name "CanchinhOffice.exe"
+    if ($ok -and (Test-Path$path)) {
         Write-Host "Dang chay CanchinhOffice.exe (quyen admin)..." -ForegroundColor Yellow
         Start-Process -FilePath $path -Verb RunAs -Wait
         Write-Log "Da chay CanchinhOffice.exe"
@@ -816,22 +853,27 @@ function Menu-SystemInfo {
 # ============================================================
 function Get-FolderSizeMB {
     param([string]$P)
+    if ([string]::IsNullOrWhiteSpace($P) -or -not (Test-Path -LiteralPath$P -EA SilentlyContinue)) { return 0 }
     try {
-        if ([string]::IsNullOrWhiteSpace($P)) { return 0 }
-        if (-not (Test-Path -LiteralPath $P -EA SilentlyContinue)) { return 0 }
-        $items = Get-ChildItem -LiteralPath $P -Recurse -Force -EA SilentlyContinue
-        if ($null -eq $items) { return 0 }
-        $sum = ($items | Measure-Object -Property Length -Sum -EA SilentlyContinue).Sum
-        if ($null -eq $sum) { return 0 }
-        return [math]::Round($sum / 1MB, 2)
-    } catch {
-        return 0
-    }
+        $out = robocopy$P "$env:TEMP\dummy_robo" /L /S /NJH /NJS /BYTES /FP /NC /NDL /TS /XJ /R:0 /W:0 2>$null
+        foreach ($line in$out) {
+            if ($line -match 'Bytes\s*:\s*(\d+)') {
+                return [math]::Round(([long]$Matches[1]) / 1MB, 2)
+            }
+        }
+    } catch {}
+    try {
+        $totalBytes = 0L
+        $dir = [System.IO.DirectoryInfo]::new($P)
+        foreach ($f in$dir.EnumerateFiles("*", [System.IO.SearchOption]::AllDirectories)) {
+            $totalBytes +=$f.Length
+        }
+        return [math]::Round($totalBytes / 1MB, 2)
+    } catch { return 0 }
 }
 
 function Invoke-CleanupFlow {
-    param([bool]$Deep)
-    $quickFolders = [ordered]@{
+    param([bool]$Deep)$quickFolders = [ordered]@{
         "User Temp"         = "$env:TEMP"
         "Windows Temp"      = "$env:windir\Temp"
         "Windows Update DL" = "$env:windir\SoftwareDistribution\Download"
@@ -847,39 +889,39 @@ function Invoke-CleanupFlow {
     }
     Clear-Host; Write-Nav; Write-Host "=== CLEANUP ANALYSIS ===" -ForegroundColor Cyan
     $total = 0
-    foreach ($k in $quickFolders.Keys) {
-        $sz = Get-FolderSizeMB $quickFolders[$k]; $total += $sz
-        Write-Host ("{0,-24} {1,8:F2} MB" -f $k, $sz)
+    foreach ($k in $quickFolders.Keys) {$sz = Get-FolderSizeMB $quickFolders[$k]; $total +=$sz
+        Write-Host ("{0,-24} {1,8:F2} MB" -f $k,$sz)
     }
     $ffProfiles = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory -EA SilentlyContinue
     $ffSize = 0
-    if ($ffProfiles) { $ffProfiles | ForEach-Object { $ffSize += Get-FolderSizeMB "$($_.FullName)\cache2" } }
-    if ($ffSize -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Firefox Cache", $ffSize); $total += $ffSize }
+    if ($ffProfiles) { $ffProfiles \vert{} ForEach-Object {$ffSize += Get-FolderSizeMB "$($_.FullName)\cache2" } }
+    if ($ffSize -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Firefox Cache", $ffSize); $total +=$ffSize }
     
     $thumbDir   = "$env:LOCALAPPDATA\Microsoft\Windows\Explorer"
     $thumbFiles = @(Get-Item "$thumbDir\thumbcache_*.db", "$thumbDir\iconcache_*.db" -EA SilentlyContinue)
     $thumbMB    = [math]::Round(($thumbFiles | Measure-Object -Property Length -Sum).Sum / 1MB, 2)
-    if ($thumbMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Thumbnail Cache", $thumbMB); $total += $thumbMB }
+    if ($thumbMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Thumbnail Cache", $thumbMB); $total +=$thumbMB }
     
     if ($Deep) {
-        foreach ($k in $deepExtra.Keys) {
-            $sz = Get-FolderSizeMB $deepExtra[$k]; $total += $sz
-            Write-Host ("{0,-24} {1,8:F2} MB" -f $k, $sz)
+        foreach ($k in $deepExtra.Keys) {$sz = Get-FolderSizeMB $deepExtra[$k]; $total +=$sz
+            Write-Host ("{0,-24} {1,8:F2} MB" -f $k,$sz)
         }
         $rbMB = Get-FolderSizeMB "$($env:SystemDrive)\`$Recycle.Bin"
-        Write-Host ("{0,-24} {1,8:F2} MB" -f "Recycle Bin", $rbMB);$total += $rbMB$dumpMB = 0
+        Write-Host ("{0,-24} {1,8:F2} MB" -f "Recycle Bin", $rbMB); $total += $rbMB
+        $dumpMB = 0
         if (Test-Path "$env:windir\MEMORY.DMP") { $dumpMB = [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length / 1MB, 2) }
-        if ($dumpMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Memory Dump", $dumpMB); $total +=$dumpMB }
+        if ($dumpMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Memory Dump", $dumpMB); $total += $dumpMB }
     }
     Write-Host ("-" * 34)
-    Write-Host ("{0,-24} {1,8:F2} MB" -f "Potentially removable", [math]::Round($total, 2)) -ForegroundColor Yellow$ans = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
-    if ($ans -eq $Global:ESC -or $ans.ToUpper() -ne "Y") { Pause-Return; return }
+    Write-Host ("{0,-24} {1,8:F2} MB" -f "Potentially removable", [math]::Round($total, 2)) -ForegroundColor Yellow
+    $ans = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
+    if ($ans -eq $Global:ESC -or$ans.ToUpper() -ne "Y") { Pause-Return; return }
     Write-Host "`nDang don dep..." -ForegroundColor Cyan
-    foreach ($k in$quickFolders.Keys) {
+    foreach ($k in $quickFolders.Keys) {
         Remove-Item "$($quickFolders[$k])\*" -Recurse -Force -EA SilentlyContinue
     }
-    if ($ffProfiles) {$ffProfiles | ForEach-Object { Remove-Item "$($_.FullName)\cache2\*" -Recurse -Force -EA SilentlyContinue } }
-    $thumbFiles \vert{} ForEach-Object { Remove-Item$_.FullName -Force -EA SilentlyContinue }
+    if ($ffProfiles) { $ffProfiles | ForEach-Object { Remove-Item "$($_.FullName)\cache2\*" -Recurse -Force -EA SilentlyContinue } }
+    $thumbFiles | ForEach-Object { Remove-Item $_.FullName -Force -EA SilentlyContinue }
     ipconfig /flushdns | Out-Null
     if ($Deep) {
         foreach ($k in $deepExtra.Keys) { Remove-Item "$($deepExtra[$k])\*" -Recurse -Force -EA SilentlyContinue }
@@ -891,7 +933,14 @@ function Invoke-CleanupFlow {
         wevtutil el | ForEach-Object { wevtutil cl "$_" 2>$null }
     }
     $after = 0
-    foreach ($k in$quickFolders.Keys) { $after += Get-FolderSizeMB$quickFolders[$k] }$freed = [math]::Round($total -$after, 2)
+    foreach ($k in $quickFolders.Keys) { $after += Get-FolderSizeMB $quickFolders[$k] }
+    if ($Deep) {
+        foreach ($k in $deepExtra.Keys) { $after += Get-FolderSizeMB $deepExtra[$k] }
+        $after += Get-FolderSizeMB "$($env:SystemDrive)\`$Recycle.Bin"
+        if (Test-Path "$env:windir\MEMORY.DMP") { $after += [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length / 1MB, 2) }
+    }
+    $freed = [math]::Round($total -$after, 2)
+    if ($freed -lt 0) {$freed = 0 }
     Write-Log "$(if($Deep){'Deep'}else{'Quick'}) Clean - freed ~$freed MB"
     Write-Host "`nDa don xong. Da giai phong khoang: $freed MB" -ForegroundColor Green
     Pause-Return
@@ -1013,7 +1062,7 @@ function Menu-ExplorerTweaks {
     Show-Menu -Title "Explorer Tweaks / Tinh chinh Explorer" -Options ([ordered]@{
         "1"=@{Label="Show File Extensions / Hien duoi file";Action={Run-Task "Show Extensions" {Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" HideFileExt 0}}}
         "2"=@{Label="Show Hidden Files / Hien file an";Action={Run-Task "Show Hidden" {Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" Hidden 1}}}
-        "3"=@{Label="Show Protected OS Files / Hien file he thong";Action={Run-Task "Show OS Files" -NeedConfirm $true -ConfirmMsg "Hien file he thong co the gay xoa nham." {Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" ShowSuperHidden 1}}}
+        "3"=@{Label="Show Protected OS Files / Hien file he thong";Action={Run-Task "Show OS Files" -NeedConfirm -ConfirmMsg "Hien file he thong co the gay xoa nham." {Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" ShowSuperHidden 1}}}
         "4"=@{Label="Show Full Path / Hien duong dan day du";Action={Run-Task "Full Path" {Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState" FullPath 1}}}
         "5"=@{Label="Open This PC / Mo This PC";Action={Run-Task "Open This PC" {Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" LaunchTo 1}}}
         "6"=@{Label="Disable Recent Files / Tat file gan day";Action={Run-Task "Disable Recent Files" {Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" Start_TrackDocs 0}}}
@@ -1067,7 +1116,7 @@ function Menu-WindowsUpdate {
         "2"=@{Label="Open Windows Update / Mo cap nhat Windows";Action={Start-Process ms-settings:windowsupdate}}
         "3"=@{Label="Windows Update Status / Trang thai cap nhat";Action={Run-Task "Update Status" {Get-Service wuauserv | Format-Table Name,Status,StartType}}}
         "4"=@{Label="Restart Update Services / Khoi dong lai dich vu";Action={Run-Task "Restart Services" {Restart-Service wuauserv,bits,cryptsvc -Force}}}
-        "5"=@{Label="Reset Update Components / Dat lai thanh phan";Action={Run-Task "Reset Components" -NeedConfirm $true -ConfirmMsg "Se dat lai cache Windows Update." {
+        "5"=@{Label="Reset Update Components / Dat lai thanh phan";Action={Run-Task "Reset Components" -NeedConfirm -ConfirmMsg "Se dat lai cache Windows Update." {
             Stop-Service wuauserv,bits,cryptsvc -Force -EA SilentlyContinue
             Rename-Item "$env:windir\SoftwareDistribution" "SoftwareDistribution.bak_$(Get-Date -Format yyyyMMddHHmmss)" -EA SilentlyContinue
             Rename-Item "$env:windir\System32\catroot2" "catroot2.bak_$(Get-Date -Format yyyyMMddHHmmss)" -EA SilentlyContinue
@@ -1242,7 +1291,8 @@ function Show-MainMenu {
         Write-Host "4. System Maintenance       / Bao tri he thong"
         Write-Host "5. Software                 / Phan mem"
         Write-Host "6. Exit                     / Thoat"
-        $c = Read-Host "Chon muc"
+        $c = Read-Esc "Chon muc: "
+        if ($c -eq$Global:ESC) { continue }
         switch ($c) {
             "1" { Menu-Network }
             "2" { Menu-PrinterSharing }
@@ -1250,40 +1300,46 @@ function Show-MainMenu {
             "4" { Menu-Maintenance }
             "5" { Menu-Software }
             "6" {
-                $confirm = Read-Host "Ban co chac muon thoat? [Y/N]"
+                $confirm = Read-Esc "Ban co chac muon thoat? [Y/N]: "
                 if ($confirm.ToUpper() -eq "Y") {
                     Write-Log "Nguoi dung thoat toolkit"
                     Write-Host ""
                     Write-Host "Cam on da su dung." -ForegroundColor Cyan
                     Write-Host ""
-                    Write-Host "Dang don dep file tam..." -ForegroundColor Gray
-                    $SID = $env:TOOLKIT_SESSION_ID$patterns = @(
-                        "$env:TEMP\ToolkitCore_$SID.ps1",
-                        "$env:TEMP\PrinterFixTool_*.exe",
-                        "$env:TEMP\UC20_*.exe",
-                        "$env:TEMP\CanchinhOffice_*.exe",
-                        "$env:TEMP\HardwareTest_*.exe",
-                        "$env:TEMP\1398_*.exe"
-                    )
-                    $deleted = @()
-                    foreach ($pat in$patterns) {
-                        Get-Item $pat -EA SilentlyContinue | ForEach-Object {
-                            $deleted +=$_.Name
-                            Remove-Item $_.FullName -Force -EA SilentlyContinue
-                        }
-                    }
-                    if ($deleted.Count -gt 0) {
-                        Write-Host "Da xoa $($deleted.Count) file:" -ForegroundColor Green
-                        $deleted \vert{} ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
-                    } else {
-                        Write-Host "Khong co file tam can xoa." -ForegroundColor Gray
-                    }
-                    Start-Sleep 2
-                    exit
+                    return
                 }
             }
         }
     } while ($true)
 }
 
-Show-MainMenu
+# ============================================================
+# EXECUTION & CLEANUP WRAPPER
+# ============================================================
+try {
+    Show-MainMenu
+} finally {
+    Write-Host "Dang don dep file tam..." -ForegroundColor Gray
+    $SID = $env:TOOLKIT_SESSION_ID$patterns = @(
+        "$env:TEMP\ToolkitCore_$SID.ps1",
+        "$env:TEMP\PrinterFixTool_*.exe",
+        "$env:TEMP\UC20_*.exe",
+        "$env:TEMP\CanchinhOffice_*.exe",
+        "$env:TEMP\HardwareTest_*.exe",
+        "$env:TEMP\1398_*.exe"
+    )
+    $deleted = [System.Collections.Generic.List[string]]::new()
+    foreach ($pat in$patterns) {
+        Get-Item $pat -EA SilentlyContinue | ForEach-Object {
+            [void]$deleted.Add($_.Name)
+            Remove-Item $_.FullName -Force -EA SilentlyContinue
+        }
+    }
+    if ($deleted.Count -gt 0) {
+        Write-Host "Da xoa $($deleted.Count) file:" -ForegroundColor Green
+        foreach ($d in $deleted) { Write-Host "  - $d" -ForegroundColor Gray }
+    } else {
+        Write-Host "Khong co file tam can xoa." -ForegroundColor Gray
+    }
+    Start-Sleep 2
+}
