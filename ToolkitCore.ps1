@@ -86,8 +86,8 @@ function Read-IPEsc {
 }
 
 function Get-PrefixLength {
-    param([string]$Input)
-    $s = $Input.Trim()
+    param([string]$PrefixInput)
+    $s = $PrefixInput.Trim()
     if ($s -eq "") { return 24 }
     if ($s -match '^\d+$' -and [int]$s -ge 0 -and [int]$s -le 32) { return [int]$s }
     if ($s -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
@@ -150,6 +150,10 @@ function Download-WithProgress {
         $task = $wc.DownloadFileTaskAsync($uri, $Dest)
         $spin = @('|', '/', '-', '\'); $si = 0
         while (-not $task.IsCompleted) {
+            if ($sw.Elapsed.TotalSeconds -gt 120) {
+                try { $wc.CancelAsync() } catch {}
+                throw "Timeout sau 120 giay, khong the tai $Name."
+            }
             $sz = if (Test-Path $Dest) { [math]::Round((Get-Item $Dest).Length / 1MB, 1) } else { 0 }
             Write-Host -NoNewline "`rDang tai $Name`: $($spin[$si%4]) $sz MB - $([math]::Round($sw.Elapsed.TotalSeconds,1))s  "
             $si++; Start-Sleep -Milliseconds 200
@@ -188,7 +192,7 @@ function Show-Menu {
             Write-Host "0. Back"
             $c = Read-Esc "Chon: "
             if ($c -eq $Global:ESC -or $c -eq "0") { break }
-            if ($Options.ContainsKey($c)) {
+            if ($Options.Contains($c)) {
                 [void]$Global:NavPath.Add($c)
                 try {
                     & $Options[$c].Action
@@ -212,13 +216,13 @@ function Run-Task {
         [string]$ConfirmMsg = ""
     )
     Clear-Host; Write-Nav; Write-Host "=== $Title ===" -ForegroundColor Cyan
-    if ($NeedConfirm -and (-not (Confirm-Action $ConfirmMsg))) { return 1 }
+    if ($NeedConfirm -and (-not (Confirm-Action $ConfirmMsg))) { Pause-Return; return 1 }
     $exitCode = 0
     $Global:LASTEXITCODE = 0
     try {
         & $Action
-        if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
-        elseif (-not $?) { $exitCode = 1 }
+        if (-not $?) { $exitCode = 1 }
+        elseif ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
         Write-Log "$Title - OK (ExitCode: $exitCode)"
         Write-Host "`nHoan tat." -ForegroundColor Green
     }
@@ -246,13 +250,12 @@ function Show-NetworkInfo {
     $upAdapters  = @($allAdapters | Where-Object Status -eq 'Up')
 
     Get-NetIPConfiguration -EA SilentlyContinue | ForEach-Object {
+        $adp = $upAdapters | Where-Object InterfaceIndex -eq $_.InterfaceIndex | Select-Object -First 1
         Write-Host "-- Adapter: $($_.InterfaceAlias) --"
         Write-Host "  IPv4    : $($_.IPv4Address.IPAddress)"
         Write-Host "  Gateway : $($_.IPv4DefaultGateway.NextHop)"
         Write-Host "  DNS     : $($_.DNSServer.ServerAddresses -join ', ')"
-    }
-    foreach ($a in$upAdapters) {
-        Write-Host "  MAC ($($a.Name)): $($a.MacAddress)"
+        if ($adp) { Write-Host "  MAC     : $($adp.MacAddress)" }
     }
 
     Write-Host "`n--- DANG CHAY QUICK NETWORK TEST ---" -ForegroundColor Cyan
@@ -383,13 +386,13 @@ function Set-StaticIP {
     $prefix = Get-PrefixLength $prefixRaw
     if ($prefix -lt 0) { Write-Host "Gia tri khong hop le."; Pause-Return; return }
     $gw = Read-IPEsc "Default Gateway (vd: 192.168.1.1)"; if ($gw -eq $Global:ESC) { return }
-    Write-Host "`nSe dat: $ip /$prefix  GW: $gw  tren interface$idx" -ForegroundColor Yellow
+    Write-Host "`nSe dat: $ip /$prefix  GW: $gw  tren interface $idx" -ForegroundColor Yellow
     if (-not (Confirm-Action "Tiep tuc?")) { return }
     try {
         Set-NetIPInterface -InterfaceIndex $idx -Dhcp Disabled -EA SilentlyContinue
-        Get-NetRoute -InterfaceIndex $idx -EA SilentlyContinue \vert{} Remove-NetRoute -Confirm:$false -EA SilentlyContinue
-        Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -EA SilentlyContinue \vert{} Remove-NetIPAddress -Confirm:$false -EA SilentlyContinue
-        New-NetIPAddress -InterfaceIndex $idx -IPAddress$ip -PrefixLength $prefix -DefaultGateway$gw -EA Stop
+        Get-NetRoute -InterfaceIndex $idx -EA SilentlyContinue | Remove-NetRoute -Confirm:$false -EA SilentlyContinue
+        Get-NetIPAddress -InterfaceIndex $idx -AddressFamily IPv4 -EA SilentlyContinue | Remove-NetIPAddress -Confirm:$false -EA SilentlyContinue
+        New-NetIPAddress -InterfaceIndex $idx -IPAddress $ip -PrefixLength $prefix -DefaultGateway $gw -EA Stop
         Write-Log "Dat IP tinh $ip/$prefix gw $gw tren if$idx"
         Write-Host "Da dat IP tinh thanh cong." -ForegroundColor Green
     } catch { Write-Host "Loi: $_" -ForegroundColor Red }
@@ -398,11 +401,13 @@ function Set-StaticIP {
 
 function Set-StaticDNS {
     Clear-Host; Write-Nav; Write-Host "=== DAT DNS TINH ===" -ForegroundColor Cyan
-    $idx = Select-NetIdx; if ($null -eq $idx) { return }$dns1 = Read-IPEsc "DNS uu tien (vd: 1.1.1.1)"; if ($dns1 -eq $Global:ESC) { return }$dns2 = Read-IPEsc "DNS thay the (vd: 8.8.8.8, ESC bo qua)"
+    $idx = Select-NetIdx; if ($null -eq $idx) { return }
+    $dns1 = Read-IPEsc "DNS uu tien (vd: 1.1.1.1)"; if ($dns1 -eq $Global:ESC) { return }
+    $dns2 = Read-IPEsc "DNS thay the (vd: 8.8.8.8, ESC bo qua)"
     $dnsList = @($dns1)
-    if ($dns2 -ne $Global:ESC -and$dns2 -ne "") { $dnsList +=$dns2 }
+    if ($dns2 -ne $Global:ESC -and $dns2 -ne "") { $dnsList += $dns2 }
     try {
-        Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses$dnsList -EA Stop
+        Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses $dnsList -EA Stop
         Write-Log "Dat DNS $($dnsList -join ', ') tren if$idx"
         Write-Host "Da dat DNS: $($dnsList -join ', ')" -ForegroundColor Green
     } catch { Write-Host "Loi: $_" -ForegroundColor Red }
@@ -416,12 +421,13 @@ function Reset-NetworkFull {
     Write-Host ("  {0,-5} {1,-22} {2}" -f "Idx", "Name", "Description") -ForegroundColor Cyan
     Write-Host ("  " + ("-" * 56))
     Write-Host ("  {0,-5} {1,-22} {2}" -f "ALL", "--- TAT CA ---", "Reset toan bo mang")
-    foreach ($a in$adapters) {
+    foreach ($a in $adapters) {
         Write-Host ("  {0,-5} {1,-22} {2}" -f $a.InterfaceIndex, $a.Name, $a.InterfaceDescription)
     }
     Write-Host ""
     $choice = Read-Esc "Nhap InterfaceIndex hoac ALL (Enter = tat ca): "
-    if ($choice -eq $Global:ESC) { return }$isAll = ($choice -eq "" -or $choice.ToUpper() -eq "ALL")
+    if ($choice -eq $Global:ESC) { return }
+    $isAll = ($choice -eq "" -or $choice.ToUpper() -eq "ALL")
 
     if ($isAll) {
         if (-not (Confirm-Action "Se reset TOAN BO mang: winsock, int ip, DNS, Data Usage. KHONG THE HOAN TAC.")) { return }
@@ -440,7 +446,7 @@ function Reset-NetworkFull {
         if (-not [int]::TryParse($choice.Trim(), [ref]$idxNum)) {
             Write-Host "Gia tri khong hop le." -ForegroundColor Red; Pause-Return; return
         }
-        $ad = $adapters \vert{} Where-Object InterfaceIndex -eq$idxNum
+        $ad = $adapters | Where-Object InterfaceIndex -eq $idxNum
         if (-not $ad) { Write-Host "Khong tim thay interface $idxNum." -ForegroundColor Red; Pause-Return; return }
         Write-Host ">> [$idxNum] $($ad.Name)" -ForegroundColor Yellow
         if (-not (Confirm-Action "Reset interface nay: FlushDNS + Release + Winsock + IntIP + Renew. Can restart.")) { return }
@@ -565,14 +571,14 @@ function Invoke-NetworkQuality {
                     $latencies.Add($ms)
                     if ($prevMs -ge 0) { $jitters.Add([math]::Abs($ms - $prevMs)) }
                     $prevMs = $ms
-                    Write-Host -NoNewline ("`r  [{0}] {1}%  {2} goi  {3}:{4}ms     " -f $bar, $pct,$total, $tgt,$ms)
+                    Write-Host -NoNewline ("`r  [{0}] {1}%  {2} goi  {3}:{4}ms     " -f $bar, $pct, $total, $tgt, $ms)
                 } else {
                     $lost++
                     Write-Host -NoNewline ("`r  [{0}] {1}%  {2} goi  {3}: TIMEOUT    " -f $bar, $pct, $total, $tgt)
                 }
             } catch {
                 $lost++
-                Write-Host -NoNewline ("`r  [{0}] {1}%  {2} goi  {3}: TIMEOUT    " -f $bar,$pct, $total,$tgt)
+                Write-Host -NoNewline ("`r  [{0}] {1}%  {2} goi  {3}: TIMEOUT    " -f $bar, $pct, $total, $tgt)
             }
             Start-Sleep -Milliseconds 700
         }
@@ -584,16 +590,19 @@ function Invoke-NetworkQuality {
     Write-Host "Dang do toc do download (Cloudflare 5MB)..." -ForegroundColor Yellow
     $dlMbps = -1
     try {
-        $dlSw = [System.Diagnostics.Stopwatch]::StartNew()$wc2  = New-Object System.Net.WebClient
+        $dlSw = [System.Diagnostics.Stopwatch]::StartNew()
+        $wc2  = New-Object System.Net.WebClient
         $wc2.Headers.Add("User-Agent", "Mozilla/5.0")
-        $data =$wc2.DownloadData("https://speed.cloudflare.com/__down?bytes=5000000")
+        $data = $wc2.DownloadData("https://speed.cloudflare.com/__down?bytes=5000000")
         $dlSw.Stop()
-        if ($data.Length -gt 0) {$dlMbps = [math]::Round(($data.Length / 1MB) /$dlSw.Elapsed.TotalSeconds, 2) }
+        if ($data.Length -gt 0) { $dlMbps = [math]::Round(($data.Length / 1MB) / $dlSw.Elapsed.TotalSeconds, 2) }
     } catch {}
 
     $lossPct   = if ($total -gt 0) { [math]::Round($lost / $total * 100, 1) } else { 100 }
-    $avgLat    = if ($latencies.Count -gt 0) { [math]::Round(($latencies \vert{} Measure-Object -Average).Average, 1) } else { 999 }$minLat    = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Minimum).Minimum } else { 0 }
-    $maxLat    = if ($latencies.Count -gt 0) { ($latencies \vert{} Measure-Object -Maximum).Maximum } else { 0 }$avgJitter = if ($jitters.Count -gt 0)   { [math]::Round(($jitters | Measure-Object -Average).Average, 1) } else { 0 }
+    $avgLat    = if ($latencies.Count -gt 0) { [math]::Round(($latencies | Measure-Object -Average).Average, 1) } else { 999 }
+    $minLat    = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Minimum).Minimum } else { 0 }
+    $maxLat    = if ($latencies.Count -gt 0) { ($latencies | Measure-Object -Maximum).Maximum } else { 0 }
+    $avgJitter = if ($jitters.Count -gt 0)   { [math]::Round(($jitters | Measure-Object -Average).Average, 1) } else { 0 }
 
     Write-Host "=== KET QUA ===" -ForegroundColor Cyan
     Write-Host ("  Latency (Avg)  : {0,8} ms" -f $avgLat)
@@ -605,17 +614,17 @@ function Invoke-NetworkQuality {
     else               { Write-Host "  Download Speed : (Khong do duoc)" -ForegroundColor Gray }
     Write-Host ""
 
-    $ratingText,$ratingColor =
-        if    ($avgLat -lt 60  -and $lossPct -eq 0 -and$avgJitter -lt 10) {
+    $ratingText, $ratingColor =
+        if    ($avgLat -lt 60  -and $lossPct -eq 0 -and $avgJitter -lt 10) {
             "[OK] EXCELLENT - Rat tot (gaming / video call 4K)",             "Green" }
-        elseif($avgLat -lt 120 -and $lossPct -lt 1 -and$avgJitter -lt 25) {
+        elseif($avgLat -lt 120 -and $lossPct -lt 1 -and $avgJitter -lt 25) {
             "[OK] GOOD      - On dinh, dung cho streaming va lam viec",      "Green" }
-        elseif($avgLat -lt 200 -and$lossPct -lt 5) {
+        elseif($avgLat -lt 200 -and $lossPct -lt 5) {
             "[!] FAIR       - Co the lag nhe, nen kiem tra lai router/ISP",  "Yellow" }
         else {
             "[X] POOR       - Ket noi yeu, nhieu mat goi hoac do tre cao",   "Red"   }
 
-    Write-Host $ratingText -ForegroundColor$ratingColor
+    Write-Host $ratingText -ForegroundColor $ratingColor
     Write-Log "NetworkQuality: Lat=${avgLat}ms Loss=${lossPct}% Jitter=${avgJitter}ms DL=${dlMbps}MB/s"
     Pause-Return
 }
@@ -710,7 +719,8 @@ function Show-SoftwareInfo {
     Write-Host "Build             : $($os.BuildNumber)"
     Write-Host "Domain/Workgroup  : $($cs.Domain)"
     Write-Host "PartOfDomain      : $($cs.PartOfDomain)"
-    $off = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Office\*\Common\ProductVersion" -EA SilentlyContinue
+    $off = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Office\*\Common\ProductVersion" -EA SilentlyContinue |
+       Select-Object -First 1
     if ($off) { Write-Host "Office version    : $($off.LastProduct)" }
     Get-NetIPConfiguration | ForEach-Object {
         Write-Host "--- $($_.InterfaceAlias) ---"
@@ -724,7 +734,8 @@ function Show-SoftwareInfo {
 
 function Show-HardwareInfoFull {
     Clear-Host; Write-Nav; Write-Host "=== THONG TIN PHAN CUNG ===" -ForegroundColor Cyan
-    $cs = Get-CimInstance Win32_ComputerSystem; $p = Get-CimInstance Win32_ComputerSystemProduct$b  = Get-CimInstance Win32_BIOS; $os = Get-CimInstance Win32_OperatingSystem
+    $cs = Get-CimInstance Win32_ComputerSystem$p  = Get-CimInstance Win32_ComputerSystemProduct
+    $b  = Get-CimInstance Win32_BIOS$os = Get-CimInstance Win32_OperatingSystem
     Write-Host "Hang san xuat : $($cs.Manufacturer)"
     Write-Host "Model may     : $($p.Name)"
     Write-Host "Serial number : $($p.IdentifyingNumber)"
@@ -808,7 +819,7 @@ function Remove-LicenseExceptMachine {
     Write-Host ""
     Write-Host "XAC NHAN LAN 2: Nhan Enter de TIEP TUC, ESC de HUY." -ForegroundColor Red
     $r2 = Read-Esc ""
-    if ($r2 -eq $Global:ESC) { Write-Host "Da huy."; Pause-Return; return }
+    if ($r2 -eq $Global:ESC -or $r2 -ne "") { Write-Host "Da huy (chi nhan Enter moi tiep tuc)."; Pause-Return; return }
     cscript //nologo "$env:windir\System32\slmgr.vbs" /upk
     cscript //nologo "$env:windir\System32\slmgr.vbs" /cpky
     Write-Log "Da go product key Windows"
