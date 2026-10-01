@@ -109,6 +109,7 @@ function Confirm-Action {
     $r = Read-Esc "Xac nhan? [Y/N] (ESC de huy): "
     return ($r.ToUpper() -eq "Y")
 }
+
 function Pause-Return {
     Write-Host ""
     Write-Host -NoNewline "Nhan Enter de quay lai"
@@ -146,30 +147,49 @@ function Download-WithProgress {
 function Show-Menu {
     param([string]$Title, $Options, [string]$NavEntry = "")
     if ($NavEntry) { [void]$Global:NavPath.Add($NavEntry) }
-    do {
-        Clear-Host
-        Write-Nav
-        Write-Host "===== $Title =====" -ForegroundColor Cyan
-        foreach ($k in $Options.Keys) { Write-Host "$k. $($Options[$k].Label)" }
-        Write-Host "0. Back"
-        $c = Read-Esc "Chon: "
-        if ($c -eq $Global:ESC -or $c -eq "0") { break }
-        if ($Options.Contains($c)) {
-            [void]$Global:NavPath.Add($c)
-            & $Options[$c].Action
-            if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
-        }
-    } while ($true)
-    if ($NavEntry -and $Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
+    try {
+        do {
+            Clear-Host
+            Write-Nav
+            Write-Host "===== $Title =====" -ForegroundColor Cyan
+            foreach ($k in $Options.Keys) { Write-Host "$k. $($Options[$k].Label)" }
+            Write-Host "0. Back"
+            $c = Read-Esc "Chon: "
+            if ($c -eq $Global:ESC -or $c -eq "0") { break }
+            if ($Options.Contains($c)) {
+                [void]$Global:NavPath.Add($c)
+                try {
+                    & $Options[$c].Action
+                } finally {
+                    if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
+                }
+            }
+        } while ($true)
+    } finally {
+        if ($NavEntry -and $Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
+    }
 }
 
 function Run-Task {
     param([string]$Title,[scriptblock]$Action,[bool]$NeedConfirm=$false,[string]$ConfirmMsg="")
     Clear-Host; Write-Nav; Write-Host "=== $Title ===" -ForegroundColor Cyan
-    if ($NeedConfirm -and (-not (Confirm-Action $ConfirmMsg))) { return }
-    try { & $Action; Write-Log "$Title - OK"; Write-Host "`nHoan tat." -ForegroundColor Green }
-    catch { Write-Log "$Title - LOI: $_"; Write-Host "`nLoi: $_" -ForegroundColor Red }
+    if ($NeedConfirm -and (-not (Confirm-Action $ConfirmMsg))) { return $null }
+    $exitCode = 0
+    $Global:LASTEXITCODE = 0
+    try {
+        & $Action
+        if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
+        elseif (-not $?) { $exitCode = 1 }
+        Write-Log "$Title - OK (ExitCode: $exitCode)"
+        Write-Host "`nHoan tat." -ForegroundColor Green
+    }
+    catch {
+        $exitCode = if ($LASTEXITCODE -ne 0) { $LASTEXITCODE } else { 1 }
+        Write-Log "$Title - LOI: $_ (ExitCode: $exitCode)"
+        Write-Host "`nLoi: $_" -ForegroundColor Red
+    }
     Pause-Return
+    return $exitCode
 }
 
 # ============================================================
@@ -193,20 +213,59 @@ function Show-NetworkInfo {
 }
 
 function Set-ComputerNameDomain {
-    Clear-Host; Write-Nav; Write-Host "=== DOI TEN MAY / DOMAIN ===" -ForegroundColor Cyan
-    $newName = Read-Esc "Hostname moi (Enter bo qua, ESC huy): "
-    if ($newName -eq $Global:ESC) { return }
-    $newDom = Read-Esc "Domain/Workgroup moi (Enter bo qua, ESC huy): "
-    if ($newDom -eq $Global:ESC) { return }
-    if ($newName -eq "" -and $newDom -eq "") { return }
-    if (-not (Confirm-Action "Doi ten may/domain can KHOI DONG LAI may.")) { return }
-    if ($newName -ne "") { Rename-Computer -NewName $newName -Force; Write-Log "Doi hostname: $newName" }
-    if ($newDom -ne "") {
-        $cred = Get-Credential -Message "Tai khoan join domain (bo qua neu doi workgroup)"
-        try { Add-Computer -DomainName $newDom -Credential $cred -Force; Write-Log "Join domain: $newDom" }
-        catch { Add-Computer -WorkgroupName $newDom -Force; Write-Log "Doi workgroup: $newDom" }
+    Clear-Host; Write-Nav; Write-Host "=== THIET LAP TEN MAY / DOMAIN / WORKGROUP ===" -ForegroundColor Cyan
+    Write-Host "1. Doi ten may (Hostname)"
+    Write-Host "2. Gia nhap Domain (Join Domain)"
+    Write-Host "3. Doi Workgroup"
+    Write-Host "0. Quay lai"
+    Write-Host ""
+    $c = Read-Esc "Chon chuc nang: "
+    if ($c -eq $Global:ESC -or $c -eq "0") { return }
+
+    switch ($c) {
+        "1" {
+            $newName = Read-Esc "Hostname moi (ESC de huy): "
+            if ($newName -eq $Global:ESC -or [string]::IsNullOrWhiteSpace($newName)) { return }
+            if (-not (Confirm-Action "Doi ten may sang '$newName' (can khoi dong lai)?")) { return }
+            try {
+                Rename-Computer -NewName $newName -Force -ErrorAction Stop
+                Write-Log "Doi hostname: $newName"
+                Write-Host "Da doi ten may thanh cong. Vui long khoi dong lai may." -ForegroundColor Green
+            } catch {
+                Write-Log "Doi hostname $newName LOI: $_"
+                Write-Host "Loi doi ten may: $_" -ForegroundColor Red
+            }
+        }
+        "2" {
+            $newDom = Read-Esc "Ten Domain moi (ESC de huy): "
+            if ($newDom -eq $Global:ESC -or [string]::IsNullOrWhiteSpace($newDom)) { return }
+            $cred = Get-Credential -Message "Nhap tai khoan quan tri Domain de join '$newDom'"
+            if ($null -eq $cred) { return }
+            if (-not (Confirm-Action "Gia nhap domain '$newDom' (can khoi dong lai)?")) { return }
+            try {
+                Add-Computer -DomainName $newDom -Credential $cred -Force -ErrorAction Stop
+                Write-Log "Join domain: $newDom"
+                Write-Host "Da join domain $newDom thanh cong. Vui long khoi dong lai may." -ForegroundColor Green
+            } catch {
+                Write-Log "Join domain $newDom LOI: $_"
+                Write-Host "Loi join domain: $_" -ForegroundColor Red
+            }
+        }
+        "3" {
+            $newWg = Read-Esc "Ten Workgroup moi (ESC de huy): "
+            if ($newWg -eq $Global:ESC -or [string]::IsNullOrWhiteSpace($newWg)) { return }
+            if (-not (Confirm-Action "Doi Workgroup sang '$newWg' (can khoi dong lai)?")) { return }
+            try {
+                Add-Computer -WorkgroupName $newWg -Force -ErrorAction Stop
+                Write-Log "Doi workgroup: $newWg"
+                Write-Host "Da doi Workgroup thanh cong. Vui long khoi dong lai may." -ForegroundColor Green
+            } catch {
+                Write-Log "Doi workgroup $newWg LOI: $_"
+                Write-Host "Loi doi workgroup: $_" -ForegroundColor Red
+            }
+        }
     }
-    Write-Host "Hoan tat. Vui long khoi dong lai may." -ForegroundColor Green; Pause-Return
+    Pause-Return
 }
 
 function Reset-IPAddress {
@@ -300,7 +359,6 @@ function Reset-NetworkFull {
     Write-Host "`nHoan tat. Khuyen nghi khoi dong lai may." -ForegroundColor Green
     Pause-Return
 }
-
 
 function Invoke-QuickNetworkTest {
     Clear-Host; Write-Nav; Write-Host "=== QUICK NETWORK TEST ===" -ForegroundColor Cyan
@@ -441,7 +499,6 @@ function Invoke-PingTool {
     Pause-Return
 }
 
-
 function Invoke-NetworkQuality {
     Clear-Host; Write-Nav; Write-Host "=== NETWORK QUALITY (60 giay) ===" -ForegroundColor Cyan
     Write-Host "Ping xen ke 8.8.8.8 va 1.1.1.1 trong 60 giay + Speed Test..." -ForegroundColor Gray
@@ -464,7 +521,7 @@ function Invoke-NetworkQuality {
             $latencies.Add($ms)
             if ($prevMs -ge 0) { $jitters.Add([math]::Abs($ms - $prevMs)) }
             $prevMs = $ms
-            Write-Host -NoNewline "`r  [$bar] $pct%  $total goi  ${tgt}: ${ms}ms     "
+            Write-Host -NoNewline "`r  [$bar] $pct\%$total goi  ${tgt}:${ms}ms     "
         } else {
             $lost++
             Write-Host -NoNewline "`r  [$bar] $pct%  $total goi  ${tgt}: TIMEOUT    "
@@ -503,7 +560,6 @@ function Invoke-NetworkQuality {
     Write-Host ""
 
     # Rating theo thuc te mang Viet Nam (target la 8.8.8.8/1.1.1.1 = WAN quoc te)
-    # FPT/Viettel/VNPT binh thuong: 40-90ms toi 8.8.8.8, nen nguong EXCELLENT la <60ms
     $ratingText, $ratingColor =
         if    ($avgLat -lt 60  -and $lossPct -eq 0 -and $avgJitter -lt 10) {
             "[OK] EXCELLENT - Rat tot (gaming / video call 4K)",             "Green" }
@@ -519,11 +575,10 @@ function Invoke-NetworkQuality {
     Pause-Return
 }
 
-
 function Menu-Network {
     Show-Menu -Title "1. NETWORK TROUBLESHOOT" -NavEntry "1" -Options ([ordered]@{
         "1"=@{Label="Kiem tra thong tin mang";Action={Show-NetworkInfo}}
-        "2"=@{Label="Dat lai ten may (Hostname/Domain)";Action={Set-ComputerNameDomain}}
+        "2"=@{Label="Dat lai ten may (Hostname/Domain/Workgroup)";Action={Set-ComputerNameDomain}}
         "3"=@{Label="Xoa IP cu, nhan IP moi";Action={Reset-IPAddress}}
         "4"=@{Label="Dat IP tinh";Action={Set-StaticIP}}
         "5"=@{Label="Dat DNS tinh";Action={Set-StaticDNS}}
@@ -658,8 +713,8 @@ function Show-HardwareInfoFull {
     Get-PhysicalDisk | ForEach-Object { Write-Host "O dia : $($_.FriendlyName) | Health: $($_.HealthStatus) | $([math]::Round($_.Size/1GB,2)) GB" }
     Get-Volume | Where-Object DriveLetter | ForEach-Object {
         $letter=$_.DriveLetter; $free=[math]::Round($_.SizeRemaining/1GB,2); $total=[math]::Round($_.Size/1GB,2)
-        $part = Get-Partition | Where-Object DriveLetter -eq $letter | Select-Object -First 1
-        Write-Host "  Drive ${letter}: | Free: ${free} / ${total} GB | Type: $($part.Type)"
+        $part = Get-Partition \vert{} Where-Object DriveLetter -eq$letter | Select-Object -First 1
+        Write-Host "  Drive ${letter}: | Free: ${free} /${total} GB | Type: $($part.Type)"
     }
     Write-Host "`n--- GPU / VGA ---" -ForegroundColor Yellow
     Get-CimInstance Win32_VideoController | ForEach-Object {
@@ -714,7 +769,7 @@ function Remove-LicenseExceptMachine {
     Write-Host ""
     Write-Host "XAC NHAN LAN 2: Nhan Enter de TIEP TUC, ESC de HUY." -ForegroundColor Red
     $r2 = Read-Esc ""
-    if ($r2 -eq $Global:ESC) { Write-Host "Da huy."; Pause-Return; return }
+    if ($r2 -eq$Global:ESC) { Write-Host "Da huy."; Pause-Return; return }
     cscript //nologo "$env:windir\System32\slmgr.vbs" /upk
     cscript //nologo "$env:windir\System32\slmgr.vbs" /cpky
     Write-Log "Da go product key Windows"
@@ -751,7 +806,17 @@ function Menu-SystemInfo {
 # ============================================================
 # 4. SYSTEM MAINTENANCE
 # ============================================================
-function Get-FolderSizeMB { param([string]$P); if(-not(Test-Path $P)){return 0}; $s=(Get-ChildItem $P -Recurse -Force -EA SilentlyContinue|Measure-Object -Property Length -Sum).Sum; if($null-eq$s){return 0}; return [math]::Round($s/1MB,2) }
+function Get-FolderSizeMB {
+    param([string]$P)
+    try {
+        if ([string]::IsNullOrWhiteSpace($P) -or -not (Test-Path -LiteralPath $P -ErrorAction SilentlyContinue)) { return 0 }
+        $s = (Get-ChildItem -LiteralPath $P -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+        if ($null -eq $s) { return 0 }
+        return [math]::Round($s / 1MB, 2)
+    } catch {
+        return 0
+    }
+}
 
 function Invoke-CleanupFlow {
     param([bool]$Deep)
@@ -789,21 +854,19 @@ function Invoke-CleanupFlow {
             Write-Host ("{0,-24} {1,8:F2} MB" -f $k, $sz)
         }
         $rbMB = Get-FolderSizeMB "$env:SystemDrive\`$Recycle.Bin"
-        Write-Host ("{0,-24} {1,8:F2} MB" -f "Recycle Bin", $rbMB); $total += $rbMB
-        $dumpMB = 0
+        Write-Host ("{0,-24} {1,8:F2} MB" -f "Recycle Bin", $rbMB);$total += $rbMB$dumpMB = 0
         if (Test-Path "$env:windir\MEMORY.DMP") { $dumpMB = [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length/1MB,2) }
-        if ($dumpMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Memory Dump", $dumpMB); $total += $dumpMB }
+        if ($dumpMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Memory Dump", $dumpMB); $total +=$dumpMB }
     }
     Write-Host ("-"*34)
-    Write-Host ("{0,-24} {1,8:F2} MB" -f "Potentially removable", [math]::Round($total,2)) -ForegroundColor Yellow
-    $ans = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
+    Write-Host ("{0,-24} {1,8:F2} MB" -f "Potentially removable", [math]::Round($total,2)) -ForegroundColor Yellow$ans = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
     if ($ans -eq $Global:ESC -or $ans.ToUpper() -ne "Y") { Pause-Return; return }
     Write-Host "`nDang don dep..." -ForegroundColor Cyan
-    foreach ($k in $quickFolders.Keys) {
+    foreach ($k in$quickFolders.Keys) {
         Remove-Item "$($quickFolders[$k])\*" -Recurse -Force -EA SilentlyContinue
     }
-    if ($ffProfiles) { $ffProfiles | ForEach-Object { Remove-Item "$($_.FullName)\cache2\*" -Recurse -Force -EA SilentlyContinue } }
-    $thumbFiles | ForEach-Object { Remove-Item $_.FullName -Force -EA SilentlyContinue }
+    if ($ffProfiles) {$ffProfiles | ForEach-Object { Remove-Item "$($_.FullName)\cache2\*" -Recurse -Force -EA SilentlyContinue } }
+    $thumbFiles \vert{} ForEach-Object { Remove-Item$_.FullName -Force -EA SilentlyContinue }
     ipconfig /flushdns | Out-Null
     if ($Deep) {
         foreach ($k in $deepExtra.Keys) { Remove-Item "$($deepExtra[$k])\*" -Recurse -Force -EA SilentlyContinue }
@@ -815,19 +878,54 @@ function Invoke-CleanupFlow {
         wevtutil el | ForEach-Object { wevtutil cl "$_" 2>$null }
     }
     $after = 0
-    foreach ($k in $quickFolders.Keys) { $after += Get-FolderSizeMB $quickFolders[$k] }
-    $freed = [math]::Round($total - $after, 2)
+    foreach ($k in$quickFolders.Keys) { $after += Get-FolderSizeMB$quickFolders[$k] }$freed = [math]::Round($total -$after, 2)
     Write-Log "$(if($Deep){'Deep'}else{'Quick'}) Clean - freed ~$freed MB"
     Write-Host "`nDa don xong. Da giai phong khoang: $freed MB" -ForegroundColor Green
     Pause-Return
 }
-
 
 function Menu-Cleanup {
     Show-Menu -Title "Windows Cleanup / Don dep Windows" -Options ([ordered]@{
         "1"=@{Label="Don qua / Quick Clean";Action={Invoke-CleanupFlow -Deep $false}}
         "2"=@{Label="Don ky / Deep Clean";Action={Invoke-CleanupFlow -Deep $true}}
     })
+}
+
+function Show-PerformanceDiag {
+    Clear-Host; Write-Nav; Write-Host "=== CHAN DOAN HIEU NANG HE THONG ===" -ForegroundColor Cyan
+    
+    $cpu = Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average
+    $cpuLoad = [math]::Round($cpu.Average, 1)
+    Write-Host "CPU Load Average  : $cpuLoad%" -ForegroundColor $(if($cpuLoad -gt 80){'Red'}elseif($cpuLoad -gt 50){'Yellow'}else{'Green'})
+    
+    $os = Get-CimInstance Win32_OperatingSystem
+    $totalRamMB = [math]::Round($os.TotalVisibleMemorySize / 1KB, 2)
+    $freeRamMB  = [math]::Round($os.FreePhysicalMemory / 1KB, 2)
+    $usedRamMB  = [math]::Round($totalRamMB - $freeRamMB, 2)
+    $ramPct     = if ($totalRamMB -gt 0) { [math]::Round(($usedRamMB / $totalRamMB) * 100, 1) } else { 0 }
+    Write-Host "RAM Usage         : $usedRamMB MB / $totalRamMB MB ($ramPct%)" -ForegroundColor $(if($ramPct -gt 85){'Red'}elseif($ramPct -gt 70){'Yellow'}else{'Green'})
+
+    Write-Host "`n--- DUNG LUONG O DIA ---" -ForegroundColor Yellow
+    Get-Volume | Where-Object DriveLetter | ForEach-Object {
+        $letter =$_.DriveLetter
+        $free   = [math]::Round($_.SizeRemaining / 1GB, 2)$total  = [math]::Round($_.Size / 1GB, 2)$pct    = if ($total -gt 0) { [math]::Round((($total - $free) /$total) * 100, 1) } else { 0 }
+        Write-Host ("  Drive {0}: {1,6} GB Free / {2,6} GB Total ({3}% used)" -f $letter, $free,$total, $pct) -ForegroundColor$(if($pct -gt 90){'Red'}elseif($pct -gt 75){'Yellow'}else{'Green'})
+    }
+
+    Write-Host "`n--- TOP 5 TIEN TRINH CHIEM RAM ---" -ForegroundColor Yellow
+    Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5 | ForEach-Object {
+        $memMB = [math]::Round($_.WorkingSet64 / 1MB, 2)
+        Write-Host ("  {0,-25} PID: {1,-6} RAM: {2,8} MB" -f $_.ProcessName, $_.Id, $memMB)
+    }
+
+    Write-Host "`n--- TOP 5 TIEN TRINH CHIEM CPU ---" -ForegroundColor Yellow
+    Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 | ForEach-Object {
+        $cpuSec = [math]::Round($_.CPU, 1)
+        Write-Host ("  {0,-25} PID: {1,-6} CPU Time: {2,6}s" -f $_.ProcessName, $_.Id, $cpuSec)
+    }
+
+    Write-Log "Chan doan hieu nang system"
+    Pause-Return
 }
 
 function Menu-Performance {
@@ -846,11 +944,11 @@ function Menu-PowerManagement {
         "1"=@{Label="Power Plan Settings / Che do nguon dien";Action={Start-Process powercfg.cpl}}
         "2"=@{Label="Screen Timeout / Thoi gian tat man hinh";Action={Run-Task "Screen Timeout" {
             $m=Read-Esc "So phut (0=khong bao gio, ESC huy): "
-            if($m -ne $Global:ESC){powercfg /change monitor-timeout-ac $m; powercfg /change monitor-timeout-dc $m}
+            if($m -ne$Global:ESC){powercfg /change monitor-timeout-ac $m; powercfg /change monitor-timeout-dc$m}
         }}}
         "3"=@{Label="Sleep Timeout / Thoi gian ngu";Action={Run-Task "Sleep Timeout" {
             $m=Read-Esc "So phut (0=khong bao gio, ESC huy): "
-            if($m -ne $Global:ESC){powercfg /change standby-timeout-ac $m; powercfg /change standby-timeout-dc $m}
+            if($m -ne$Global:ESC){powercfg /change standby-timeout-ac $m; powercfg /change standby-timeout-dc$m}
         }}}
         "4"=@{Label="Lid Close Action / Hanh dong gap man hinh";Action={Start-Process powercfg.cpl}}
         "5"=@{Label="Power Button Action / Hanh dong nut nguon";Action={Start-Process powercfg.cpl}}
@@ -859,7 +957,7 @@ function Menu-PowerManagement {
             $c = Read-Esc "Tao bao cao? [Y/N]: "
             if ($c.ToUpper() -ne "Y") { return }
             $out = [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'battery-report.html')
-            if (Test-Path $out) { Remove-Item $out -Force -EA SilentlyContinue }
+            if (Test-Path $out) { Remove-Item$out -Force -EA SilentlyContinue }
             Write-Host "Dang tao bao cao pin..." -ForegroundColor Yellow
             Push-Location ([Environment]::GetFolderPath('Desktop'))
             cmd /c "powercfg /batteryreport" 2>&1 | Out-Null
@@ -873,17 +971,15 @@ function Menu-PowerManagement {
             $c = Read-Esc "Tao bao cao? [Y/N]: "
             if ($c.ToUpper() -ne "Y") { return }
             $out = [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), 'energy-report.html')
-            if (Test-Path $out) { Remove-Item $out -Force -EA SilentlyContinue }
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            $rs = [RunspaceFactory]::CreateRunspace(); $rs.Open()
-            $psEnergy = [PowerShell]::Create(); $psEnergy.Runspace = $rs
+            if (Test-Path $out) { Remove-Item$out -Force -EA SilentlyContinue }
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()$rs = [RunspaceFactory]::CreateRunspace(); $rs.Open()$psEnergy = [PowerShell]::Create(); $psEnergy.Runspace =$rs
             [void]$psEnergy.AddScript({
                 param($desk)
                 Push-Location $desk
                 cmd /c "powercfg /energy /duration 20" 2>&1 | Out-Null
                 Pop-Location
             }).AddArgument([Environment]::GetFolderPath('Desktop'))
-            $handle = $psEnergy.BeginInvoke()
+            $handle =$psEnergy.BeginInvoke()
             while (-not $handle.IsCompleted) {
                 $pct = [math]::Min(99, [math]::Round($sw.Elapsed.TotalSeconds / 25 * 100))
                 Write-Host -NoNewline "`r  Dang phan tich: $pct% - $([math]::Round($sw.Elapsed.TotalSeconds,0))s  "
@@ -1060,13 +1156,12 @@ function Open-Site {
     Pause-Return
 }
 
-
 function Run-FontViet {
     Clear-Host; Write-Nav; Write-Host "=== CAI DAT FONT CHU TIENG VIET (1398.exe) ===" -ForegroundColor Cyan
     $url = "https://www.dropbox.com/scl/fi/nhg1tmopwvtumeukloelt/1398.exe?rlkey=lesaybeoat6h0rv6rvzzj8oif&st=k6qfnmd0&dl=1"
     $path = "$env:TEMP\1398_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
-    $ok = Download-WithProgress -Url $url -Dest $path -Name "1398.exe"
-    if ($ok -and (Test-Path $path)) {
+    $ok = Download-WithProgress -Url $url -Dest$path -Name "1398.exe"
+    if ($ok -and (Test-Path$path)) {
         Write-Host "Dang chay 1398.exe (quyen admin)..." -ForegroundColor Yellow
         Start-Process -FilePath $path -Verb RunAs -Wait
         Write-Log "Da chay 1398.exe (font tieng Viet)"
@@ -1074,6 +1169,7 @@ function Run-FontViet {
     }
     Pause-Return
 }
+
 function Menu-OtherSoftware {
     Show-Menu -Title "PHAN MEM KHAC / OTHER SOFTWARE" -Options ([ordered]@{
         "1"=@{Label="Office AIO 2016-2024";Action={Open-Site "Office AIO 2016-2024" "https://shrinkme.click/1PyGgj"}}
@@ -1084,90 +1180,93 @@ function Menu-OtherSoftware {
 
 function Menu-Software {
     [void]$Global:NavPath.Add("5")
-    do {
-        Clear-Host
-        Write-Nav
-        Write-Host "===== 5. SOFTWARE / PHAN MEM =====" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host "-- LIEN LAC / COMMUNICATION --" -ForegroundColor Yellow
-        Write-Host "1. Zalo PC"
-        Write-Host "2. Zoom"
-        Write-Host "3. Telegram"
-        Write-Host "4. WeChat"
-        Write-Host "5. KakaoTalk"
-        Write-Host ""
-        Write-Host "-- TRINH DUYET / BROWSER --" -ForegroundColor Yellow
-        Write-Host "6. Google Chrome"
-        Write-Host "7. Coc Coc"
-        Write-Host ""
-        Write-Host "-- OFFICE / VAN PHONG --" -ForegroundColor Yellow
-        Write-Host "8.  Cai dat font chu Viet Nam (1398.exe)"
-        Write-Host "9.  Unikey"
-        Write-Host "10. Office 365"
-        Write-Host "11. WPS Office"
-        Write-Host "12. LibreOffice"
-        Write-Host "13. Foxit PDF Reader"
-        Write-Host "14. PDFgear (Edit PDF)"
-        Write-Host ""
-        Write-Host "-- MEDIA & TRUYEN THONG --" -ForegroundColor Yellow
-        Write-Host "15. VLC"
-        Write-Host "16. CapCut"
-        Write-Host "17. OBS Studio"
-        Write-Host ""
-        Write-Host "-- CONG CU HE THONG / SYSTEM TOOLS --" -ForegroundColor Yellow
-        Write-Host "18. WinRAR"
-        Write-Host "19. ImageGlass"
-        Write-Host "20. AnyDesk"
-        Write-Host "21. UltraViewer"
-        Write-Host "22. Man hinh cho Fliqlo"
-        Write-Host "23. Bing Wallpaper"
-        Write-Host "24. Crystal Disk Info"
-        Write-Host "25. Recoverit"
-        Write-Host "26. MiniTool Partition Wizard"
-        Write-Host "27. Double Driver"
-        Write-Host ""
-        Write-Host "-- PHAN MEM KHAC / OTHER --" -ForegroundColor Yellow
-        Write-Host "99. Office AIO / AutoCAD / WinToHDD"
-        Write-Host ""
-        Write-Host "0. Back"
-        $c = Read-Esc "Chon: "
-        if ($c -eq $Global:ESC -or $c -eq "0") { break }
-        [void]$Global:NavPath.Add($c)
-        switch ($c) {
-            "1"  { Open-Site "Zalo PC"                   "https://zalo.me/pc" }
-            "2"  { Open-Site "Zoom"                      "https://zoom.us/download" }
-            "3"  { Open-Site "Telegram"                  "https://telegram.org/dl/desktop/win" }
-            "4"  { Open-Site "WeChat"                    "https://www.wechat.com/en/" }
-            "5"  { Open-Site "KakaoTalk"                 "https://www.kakaocorp.com/page/service/all?lang=ENG" }
-            "6"  { Open-Site "Google Chrome"             "https://www.google.com/chrome/" }
-            "7"  { Open-Site "Coc Coc"                   "https://coccoc.com/download" }
-            "8"  { Run-FontViet }
-            "9"  { Open-Site "Unikey"                    "https://www.unikey.org/download.html" }
-            "10" { Open-Site "Office 365"                "https://www.microsoft.com/en-us/microsoft-365/try" }
-            "11" { Open-Site "WPS Office"                "https://www.wps.com/download/" }
-            "12" { Open-Site "LibreOffice"               "https://www.libreoffice.org/download/download/" }
-            "13" { Open-Site "Foxit PDF Reader"          "https://www.foxit.com/pdf-reader/" }
-            "14" { Open-Site "PDFgear"                   "https://pdfgear.com/pdfgear-for-windows/" }
-            "15" { Open-Site "VLC"                       "https://www.videolan.org/vlc/download-windows.html" }
-            "16" { Open-Site "CapCut"                    "https://www.capcut.com/tools/pc-video-editor" }
-            "17" { Open-Site "OBS Studio"                "https://obsproject.com/download" }
-            "18" { Open-Site "WinRAR"                    "https://www.rarlab.com/download.htm" }
-            "19" { Open-Site "ImageGlass"                "https://imageglass.org/" }
-            "20" { Open-Site "AnyDesk"                   "https://anydesk.com/en/downloads/windows" }
-            "21" { Open-Site "UltraViewer"               "https://www.ultraviewer.net/en/download.html" }
-            "22" { Open-Site "Fliqlo Screensaver"        "https://fliqlo.com/screensaver/" }
-            "23" { Open-Site "Bing Wallpaper"            "https://www.microsoft.com/en-us/bing/bing-wallpaper" }
-            "24" { Open-Site "Crystal Disk Info"         "https://crystalmark.info/en/download/" }
-            "25" { Open-Site "Recoverit"                 "https://recoverit.wondershare.com/" }
-            "26" { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" }
-            "27" { Open-Site "Double Driver"             "https://download.com.vn/double-driver-25157" }
-            "99" { Menu-OtherSoftware }
-        }
+    try {
+        do {
+            Clear-Host
+            Write-Nav
+            Write-Host "===== 5. SOFTWARE / PHAN MEM =====" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "-- LIEN LAC / COMMUNICATION --" -ForegroundColor Yellow
+            Write-Host "1. Zalo PC"
+            Write-Host "2. Zoom"
+            Write-Host "3. Telegram"
+            Write-Host "4. WeChat"
+            Write-Host "5. KakaoTalk"
+            Write-Host ""
+            Write-Host "-- TRINH DUYET / BROWSER --" -ForegroundColor Yellow
+            Write-Host "6. Google Chrome"
+            Write-Host "7. Coc Coc"
+            Write-Host ""
+            Write-Host "-- OFFICE / VAN PHONG --" -ForegroundColor Yellow
+            Write-Host "8.  Cai dat font chu Viet Nam (1398.exe)"
+            Write-Host "9.  Unikey"
+            Write-Host "10. Office 365"
+            Write-Host "11. WPS Office"
+            Write-Host "12. LibreOffice"
+            Write-Host "13. Foxit PDF Reader"
+            Write-Host "14. PDFgear (Edit PDF)"
+            Write-Host ""
+            Write-Host "-- MEDIA & TRUYEN THONG --" -ForegroundColor Yellow
+            Write-Host "15. VLC"
+            Write-Host "16. CapCut"
+            Write-Host "17. OBS Studio"
+            Write-Host ""
+            Write-Host "-- CONG CU HE THONG / SYSTEM TOOLS --" -ForegroundColor Yellow
+            Write-Host "18. WinRAR"
+            Write-Host "19. ImageGlass"
+            Write-Host "20. AnyDesk"
+            Write-Host "21. UltraViewer"
+            Write-Host "22. Man hinh cho Fliqlo"
+            Write-Host "23. Bing Wallpaper"
+            Write-Host "24. Crystal Disk Info"
+            Write-Host "25. Recoverit"
+            Write-Host "26. MiniTool Partition Wizard"
+            Write-Host "27. Double Driver"
+            Write-Host ""
+            Write-Host "-- PHAN MEM KHAC / OTHER --" -ForegroundColor Yellow
+            Write-Host "99. Office AIO / AutoCAD / WinToHDD"
+            Write-Host ""
+            Write-Host "0. Back"
+            $c = Read-Esc "Chon: "
+            if ($c -eq $Global:ESC -or$c -eq "0") { break }
+            [void]$Global:NavPath.Add($c)
+            try {
+                switch ($c) {
+                    "1"  { Open-Site "Zalo PC"                   "https://zalo.me/pc" }
+                    "2"  { Open-Site "Zoom"                      "https://zoom.us/download" }
+                    "3"  { Open-Site "Telegram"                  "https://telegram.org/dl/desktop/win" }
+                    "4"  { Open-Site "WeChat"                    "https://www.wechat.com/en/" }
+                    "5"  { Open-Site "KakaoTalk"                 "https://www.kakaocorp.com/page/service/all?lang=ENG" }
+                    "6"  { Open-Site "Google Chrome"             "https://www.google.com/chrome/" }
+                    "7"  { Open-Site "Coc Coc"                   "https://coccoc.com/download" }
+                    "8"  { Run-FontViet }
+                    "9"  { Open-Site "Unikey"                    "https://www.unikey.org/download.html" }
+                    "10" { Open-Site "Office 365"                "https://www.microsoft.com/en-us/microsoft-365/try" }
+                    "11" { Open-Site "WPS Office"                "https://www.wps.com/download/" }
+                    "12" { Open-Site "LibreOffice"               "https://www.libreoffice.org/download/download/" }
+                    "13" { Open-Site "Foxit PDF Reader"          "https://www.foxit.com/pdf-reader/" }
+                    "14" { Open-Site "PDFgear"                   "https://pdfgear.com/pdfgear-for-windows/" }
+                    "15" { Open-Site "VLC"                       "https://www.videolan.org/vlc/download-windows.html" }
+                    "16" { Open-Site "CapCut"                    "https://www.capcut.com/tools/pc-video-editor" }
+                    "17" { Open-Site "OBS Studio"                "https://obsproject.com/download" }
+                    "18" { Open-Site "WinRAR"                    "https://www.rarlab.com/download.htm" }
+                    "19" { Open-Site "ImageGlass"                "https://imageglass.org/" }
+                    "20" { Open-Site "AnyDesk"                   "https://anydesk.com/en/downloads/windows" }
+                    "21" { Open-Site "UltraViewer"               "https://www.ultraviewer.net/en/download.html" }
+                    "22" { Open-Site "Fliqlo Screensaver"        "https://fliqlo.com/screensaver/" }
+                    "23" { Open-Site "Bing Wallpaper"            "https://www.microsoft.com/en-us/bing/bing-wallpaper" }
+                    "24" { Open-Site "Crystal Disk Info"         "https://crystalmark.info/en/download/" }
+                    "25" { Open-Site "Recoverit"                 "https://recoverit.wondershare.com/" }
+                    "26" { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" }
+                    "27" { Open-Site "Double Driver"             "https://download.com.vn/double-driver-25157" }
+                    "99" { Menu-OtherSoftware }
+                }
+            } finally {
+                if ($Global:NavPath.Count -gt 0) {$Global:NavPath.RemoveAt($Global:NavPath.Count-1) }             }         } while ($true)
+    } finally {
         if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
-    } while ($true)
-    if ($Global:NavPath.Count -gt 0) { $Global:NavPath.RemoveAt($Global:NavPath.Count-1) }
+    }
 }
-
 
 # ============================================================
 # MAIN MENU
@@ -1200,8 +1299,7 @@ function Show-MainMenu {
                     Write-Host "Cam on da su dung." -ForegroundColor Cyan
                     Write-Host ""
                     Write-Host "Dang don dep file tam..." -ForegroundColor Gray
-                    $SID = $env:TOOLKIT_SESSION_ID
-                    $patterns = @(
+                    $SID = $env:TOOLKIT_SESSION_ID$patterns = @(
                         "$env:TEMP\ToolkitCore_$SID.ps1",
                         "$env:TEMP\PrinterFixTool_*.exe",
                         "$env:TEMP\UC20_*.exe",
@@ -1210,15 +1308,15 @@ function Show-MainMenu {
                         "$env:TEMP\1398_*.exe"
                     )
                     $deleted = @()
-                    foreach ($pat in $patterns) {
+                    foreach ($pat in$patterns) {
                         Get-Item $pat -EA SilentlyContinue | ForEach-Object {
-                            $deleted += $_.Name
+                            $deleted +=$_.Name
                             Remove-Item $_.FullName -Force -EA SilentlyContinue
                         }
                     }
                     if ($deleted.Count -gt 0) {
                         Write-Host "Da xoa $($deleted.Count) file:" -ForegroundColor Green
-                        $deleted | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
+                        $deleted \vert{} ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
                     } else {
                         Write-Host "Khong co file tam can xoa." -ForegroundColor Gray
                     }
