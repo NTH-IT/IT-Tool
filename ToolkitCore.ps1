@@ -1,12 +1,13 @@
 # ============================================================
-#  BO CONG CU DA DUNG CHO WINDOWS - Phat trien boi Mr.Hai
+#  BO CONG CU DA DUNG CHO WINDOWS - Phat trien boi Mr.Hai 2026
 # ============================================================
 $ErrorActionPreference = "Continue"
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
 $LogFile = "$env:TEMP\toolkit_actions_$(Get-Date -Format yyyyMMdd_HHmmss).log"
 $Global:ESC = "##ESC##"
 $Global:NavPath = [System.Collections.Generic.List[string]]::new()
-
+$Global:SmartctlPath = $null
+$Global:SmartctlUrl  = "https://www.dropbox.com/scl/fi/ojakqjmj8ub6129idfnaz/smartctl.exe?rlkey=uibu2rdkzaejjqnfg5vml8sea&st=zs8zh3f9&dl=1"
 function Write-Nav {
     if ($Global:NavPath.Count -gt 0) {
         Write-Host ("  [" + ($Global:NavPath -join ">") + "]") -ForegroundColor DarkCyan
@@ -166,16 +167,32 @@ function Download-WithProgress {
         $uri = New-Object System.Uri($Url)
         $task = $wc.DownloadFileTaskAsync($uri, $Dest)
         $spin = @('|', '/', '-', '\'); $si = 0
+        $cancelled = $false
         while (-not $task.IsCompleted) {
+            # Cho phep ESC de skip
+            if ([Console]::KeyAvailable) {
+                $k = [Console]::ReadKey($true)
+                if ($k.Key -eq 'Escape') {
+                    $cancelled = $true
+                    try { $wc.CancelAsync() } catch {}
+                    break
+                }
+            }
             if ($sw.Elapsed.TotalSeconds -gt 120) {
                 try { $wc.CancelAsync() } catch {}
                 throw "Timeout sau 120 giay, khong the tai $Name."
             }
             $sz = if (Test-Path $Dest) { [math]::Round((Get-Item $Dest).Length / 1MB, 1) } else { 0 }
-            Write-Host -NoNewline "`rDang tai $Name`: $($spin[$si % 4]) $sz MB - $([math]::Round($sw.Elapsed.TotalSeconds,1))s  "
+            Write-Host -NoNewline "`rDang tai $Name`: $($spin[$si % 4]) $sz MB - $([math]::Round($sw.Elapsed.TotalSeconds,1))s  (ESC de huy)  "
             $si++; Start-Sleep -Milliseconds 200
         }
         Write-Host ""
+        if ($cancelled) {
+            Start-Sleep -Milliseconds 300
+            Write-Host "Da huy tai $Name." -ForegroundColor Yellow
+            Remove-Item $Dest -Force -EA SilentlyContinue
+            return $false
+        }
         if ($task.IsFaulted) { throw $task.Exception.InnerException }
         if ($task.IsCanceled) { throw "Qua trinh tai bi huy." }
         $sw.Stop()
@@ -283,6 +300,30 @@ function Get-PingMs {
         return -1
     } catch { return -1 }
     finally { if ($p) { $p.Dispose() } }
+}
+function Get-SmartctlPath {
+    if ($Global:SmartctlPath -and (Test-Path $Global:SmartctlPath)) { return $Global:SmartctlPath }
+    $local = "$env:TEMP\smartctl_toolkit.exe"
+    if (Test-Path $local) { $Global:SmartctlPath = $local; return $local }
+    Write-Host "Chua co smartctl, dang tai tu Dropbox..." -ForegroundColor Yellow
+    $ok = Download-WithProgress -Url $Global:SmartctlUrl -Dest $local -Name "smartctl.exe"
+    if ($ok -and (Test-Path $local)) {
+        $Global:SmartctlPath = $local
+        return $local
+    }
+    return $null
+}
+
+function Invoke-Smartctl {
+    param([string]$Args)
+    $exe = Get-SmartctlPath
+    if (-not $exe) { return $null }
+    try {
+        $out = & $exe $Args.Split(' ') 2>&1 | Out-String
+        return $out
+    } catch {
+        return $null
+    }
 }
 
 # ============================================================
@@ -756,6 +797,8 @@ function Run-PrinterFixTool {
         Write-Host "Thoi gian chay: $([math]::Round($sw.Elapsed.TotalSeconds,1)) giay" -ForegroundColor Green
         Write-Log "Chay PrinterFixTool.exe - $([math]::Round($sw.Elapsed.TotalSeconds,1))s"
         Remove-Item $path -Force -EA SilentlyContinue
+    } else {
+        Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
     }
     Pause-Return
 }
@@ -921,7 +964,410 @@ function Run-CanchinhOffice {
         Start-Process -FilePath $path -Verb RunAs -Wait
         Write-Log "Da chay CanchinhOffice.exe"
         Remove-Item $path -Force -EA SilentlyContinue
+    } else {
+        Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
     }
+    Pause-Return
+}
+
+function Get-DiskTypeInfo {
+    param($PhysicalDisk)
+    $busType = $PhysicalDisk.BusType
+    $mediaType = $PhysicalDisk.MediaType
+    $typeStr = switch ($busType) {
+        'NVMe' { 'NVMe SSD' }
+        'SATA' { if ($mediaType -eq 'SSD') { 'SATA SSD' } else { 'SATA HDD' } }
+        'USB'  { 'USB' }
+        default { "$busType / $mediaType" }
+    }
+    return $typeStr
+}
+
+function Show-DiskList {
+    $disks = @(Get-PhysicalDisk | Sort-Object DeviceId)
+    if ($disks.Count -eq 0) {
+        Write-Host "Khong tim thay o cung nao." -ForegroundColor Red
+        return $null
+    }
+    Write-Host ""
+    Write-Host ("  {0,-4} {1,-28} {2,-10} {3,12} {4,-10}" -f "Idx", "Model", "Type", "Size(GB)", "Health") -ForegroundColor Cyan
+    Write-Host ("  " + ("-" * 72))
+    $i = 1
+    foreach ($d in $disks) {
+        $sizeGB = [math]::Round($d.Size / 1GB, 2)
+        $typeStr = Get-DiskTypeInfo $d
+        $health = $d.HealthStatus
+        $color = if ($health -eq 'Healthy') { 'Green' } elseif ($health -eq 'Warning') { 'Yellow' } else { 'Red' }
+        Write-Host ("  {0,-4} {1,-28} {2,-10} {3,12} {4,-10}" -f $i, $d.FriendlyName, $typeStr, $sizeGB, $health) -ForegroundColor $color
+        $i++
+    }
+    Write-Host ""
+    return $disks
+}
+
+function Show-DiskInfoBlock {
+    param($Disk, $DiskNumber)
+    $pd = Get-PhysicalDisk | Where-Object DeviceId -eq $DiskNumber | Select-Object -First 1
+    if (-not $pd) { return }
+
+    $sizeGB = [math]::Round($pd.Size / 1GB, 2)
+    $partStyle = try { (Get-Disk -Number $DiskNumber -EA Stop).PartitionStyle } catch { "Unknown" }
+
+    $fw = "N/A"; $serial = "N/A"; $temp = "N/A"
+    $smartInfo = Invoke-Smartctl "-i \\.\PhysicalDrive$DiskNumber"
+    if ($smartInfo) {
+        if ($smartInfo -match 'Firmware Version:\s*(.+)') { $fw = $Matches[1].Trim() }
+        if ($smartInfo -match 'Serial Number:\s*(.+)')     { $serial = $Matches[1].Trim() }
+    }
+    $smartAll = Invoke-Smartctl "-A \\.\PhysicalDrive$DiskNumber"
+    if ($smartAll -match 'Temperature:\s*(\d+)') { $temp = "$($Matches[1]) C" }
+
+    Write-Host "--- Disk Information ---" -ForegroundColor Cyan
+    Write-Host ("  Model            : {0}" -f $pd.FriendlyName)
+    Write-Host ("  Serial Number    : {0}" -f $serial)
+    Write-Host ("  Firmware         : {0}" -f $fw)
+    Write-Host ("  Disk Type        : {0}" -f (Get-DiskTypeInfo $pd))
+    Write-Host ("  Bus Type         : {0}" -f $pd.BusType)
+    Write-Host ("  Interface        : {0}" -f $pd.BusType)
+    Write-Host ("  Capacity         : {0} GB" -f $sizeGB)
+    Write-Host ("  Partition Style  : {0}" -f $partStyle)
+    $sectorSize = try { (Get-Disk -Number $DiskNumber).LogicalSectorSize } catch { "N/A" }
+    $physSector = try { (Get-Disk -Number $DiskNumber).PhysicalSectorSize } catch { "N/A" }
+    Write-Host ("  Sector size      : {0} bytes" -f $sectorSize)
+    Write-Host ("  Logical sector   : {0} bytes" -f $sectorSize)
+    Write-Host ("  Physical sector  : {0} bytes" -f $physSector)
+    Write-Host ("  Temperature      : {0}" -f $temp)
+    Write-Host ""
+
+    Write-Host "--- Partition / Free Space ---" -ForegroundColor Cyan
+    Write-Host ("  {0,-6} {1,-12} {2,10} {3,10} {4,10} {5,10}" -f "Drive", "FileSystem", "Size(GB)", "Used(GB)", "Free(GB)", "% Free")
+    Write-Host ("  " + ("-" * 66))
+    $parts = Get-Partition -DiskNumber $DiskNumber -EA SilentlyContinue
+    foreach ($p in $parts) {
+        if (-not $p.DriveLetter) { continue }
+        $vol = Get-Volume -DriveLetter $p.DriveLetter -EA SilentlyContinue
+        if (-not $vol) { continue }
+        $szGB = [math]::Round($vol.Size / 1GB, 2)
+        $freeGB = [math]::Round($vol.SizeRemaining / 1GB, 2)
+        $usedGB = [math]::Round($szGB - $freeGB, 2)
+        $pctFree = if ($szGB -gt 0) { [math]::Round(($freeGB / $szGB) * 100, 1) } else { 0 }
+        Write-Host ("  {0,-6} {1,-12} {2,10} {3,10} {4,10} {5,10}" -f "$($p.DriveLetter):", $vol.FileSystem, $szGB, $usedGB, $freeGB, "$pctFree%")
+    }
+    Write-Host ""
+}
+
+function Show-SmartAttributes {
+    param($Disk, $DiskNumber)
+    $pd = Get-PhysicalDisk | Where-Object DeviceId -eq $DiskNumber | Select-Object -First 1
+    $isNvme = $pd.BusType -eq 'NVMe'
+    $isSsd  = $pd.MediaType -eq 'SSD'
+    $isHdd  = -not $isSsd -and -not $isNvme
+
+    $smart = Invoke-Smartctl "-A \\.\PhysicalDrive$DiskNumber"
+    if (-not $smart) {
+        Write-Host "Khong doc duoc SMART (can smartctl hoac o khong ho tro)." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "--- SMART Information ---" -ForegroundColor Cyan
+
+    $poh = $null; $pc = $null; $used = $null; $spare = $null; $spareThr = $null
+    $dur = $null; $duw = $null; $unsafe = $null; $mediaErr = $null; $errLog = $null
+    $realloc = $null; $pending = $null; $offline = $null; $reportUnc = $null
+    $seekErr = $null; $spinRetry = $null; $startStop = $null
+
+    foreach ($line in ($smart -split "`n")) {
+        if ($line -match 'Percentage Used:\s*(\d+)%') { $used = "$($Matches[1])%" }
+        if ($line -match 'Available Spare:\s*(\d+)%') { $spare = "$($Matches[1])%" }
+        if ($line -match 'Available Spare Threshold:\s*(\d+)%') { $spareThr = "$($Matches[1])%" }
+        if ($line -match 'Data Units Read:\s*([\d,]+)') { $dur = $Matches[1] }
+        if ($line -match 'Data Units Written:\s*([\d,]+)') { $duw = $Matches[1] }
+        if ($line -match 'Power Cycles:\s*([\d,]+)') { $pc = $Matches[1] }
+        if ($line -match 'Power On Hours:\s*([\d,]+)') { $poh = $Matches[1] }
+        if ($line -match 'Unsafe Shutdowns:\s*([\d,]+)') { $unsafe = $Matches[1] }
+        if ($line -match 'Media and Data Integrity Errors:\s*([\d,]+)') { $mediaErr = $Matches[1] }
+        if ($line -match 'Error Information Log Entries:\s*([\d,]+)') { $errLog = $Matches[1] }
+        if ($line -match 'Reallocated_Sector_Ct.*?\s(\d+)$') { $realloc = $Matches[1] }
+        if ($line -match 'Current_Pending_Sector.*?\s(\d+)$') { $pending = $Matches[1] }
+        if ($line -match 'Offline_Uncorrectable.*?\s(\d+)$') { $offline = $Matches[1] }
+        if ($line -match 'Reported_Uncorrect.*?\s(\d+)$') { $reportUnc = $Matches[1] }
+        if ($line -match 'Seek_Error_Rate.*?\s(\d+)$') { $seekErr = $Matches[1] }
+        if ($line -match 'Spin_Retry_Count.*?\s(\d+)$') { $spinRetry = $Matches[1] }
+        if ($line -match 'Start_Stop_Count.*?\s(\d+)$') { $startStop = $Matches[1] }
+        if ($line -match 'Power_Cycle_Count.*?\s(\d+)$') { $pc = $Matches[1] }
+        if ($line -match 'Power_On_Hours.*?\s(\d+)$') { $poh = $Matches[1] }
+    }
+
+    if ($isNvme) {
+        Write-Host ("  Percentage Used          : {0}" -f $used)
+        Write-Host ("  Available Spare          : {0}" -f $spare)
+        Write-Host ("  Available Spare Thresh.  : {0}" -f $spareThr)
+        Write-Host ("  Data Units Read          : {0}" -f $dur)
+        Write-Host ("  Data Units Written       : {0}" -f $duw)
+        Write-Host ("  Power Cycles             : {0}" -f $pc)
+        Write-Host ("  Power On Hours           : {0} h" -f $poh)
+        Write-Host ("  Unsafe Shutdowns         : {0}" -f $unsafe)
+        Write-Host ("  Media Errors             : {0}" -f $mediaErr)
+        Write-Host ("  Error Info Log Entries   : {0}" -f $errLog)
+    } elseif ($isSsd) {
+        Write-Host ("  Percentage Used          : {0}" -f $used)
+        Write-Host ("  Available Spare          : {0}" -f $spare)
+        Write-Host ("  Available Spare Thresh.  : {0}" -f $spareThr)
+        Write-Host ("  Data Units Read          : {0}" -f $dur)
+        Write-Host ("  Data Units Written       : {0}" -f $duw)
+        Write-Host ("  Power Cycles             : {0}" -f $pc)
+        Write-Host ("  Power On Hours           : {0} h" -f $poh)
+        Write-Host ("  Unsafe Shutdowns         : {0}" -f $unsafe)
+        Write-Host ("  Media Errors             : {0}" -f $mediaErr)
+    } else {
+        Write-Host ("  Reallocated Sector Count    : {0}" -f $realloc)
+        Write-Host ("  Current Pending Sector      : {0}" -f $pending)
+        Write-Host ("  Offline Uncorrectable       : {0}" -f $offline)
+        Write-Host ("  Reported Uncorrectable Errs : {0}" -f $reportUnc)
+        Write-Host ("  Seek Error Rate             : {0}" -f $seekErr)
+        Write-Host ("  Spin Retry Count            : {0}" -f $spinRetry)
+        Write-Host ("  Start/Stop Count            : {0}" -f $startStop)
+        Write-Host ("  Power-On Hours              : {0}" -f $poh)
+        Write-Host ("  Power Cycle Count           : {0}" -f $pc)
+    }
+    Write-Host ""
+
+    Write-Host "--- Thong so quan trong ---" -ForegroundColor Cyan
+    $pohNum = 0
+    if ($poh) { $pohNum = [int]($poh -replace ',','') }
+    $pcNum = 0
+    if ($pc) { $pcNum = [int]($pc -replace ',','') }
+
+    $days = [math]::Round($pohNum / 24, 1)
+    $months = [math]::Round($days / 30, 1)
+    $years = [math]::Round($days / 365, 2)
+    Write-Host ("  Power On Hours (POH)       : {0} h  (~{1} ngay / {2} thang / {3} nam)" -f $pohNum, $days, $months, $years)
+    Write-Host ("  Power Cycle Count          : {0}" -f $pcNum)
+    if ($pcNum -gt 0) {
+        $avgHours = [math]::Round($pohNum / $pcNum, 2)
+        Write-Host ("  Average usage per power cyc: {0} h/lan" -f $avgHours)
+    } else {
+        Write-Host "  Average usage per power cyc: N/A"
+    }
+    Write-Host ""
+}
+
+function Show-SmartExtras {
+    param($DiskNumber)
+    while ($true) {
+        Write-Host "--- SMART Extras ---" -ForegroundColor Cyan
+        Write-Host "  1. Xem lich su Self-Test (smartctl -l seltest)"
+        Write-Host "  2. Xem Full SMART (smartctl -x)"
+        Write-Host "  0. Quay lai"
+        $c = Read-Esc "Chon: "
+        if ($c -eq $Global:ESC -or $c -eq "0") { return }
+
+        if ($c -eq "1") {
+            Clear-Host
+            Write-Host "=== Self-Test Log ===" -ForegroundColor Cyan
+            $out = Invoke-Smartctl "-l seltest \\.\PhysicalDrive$DiskNumber"
+            if ($out) { Write-Host $out } else { Write-Host "(Khong doc duoc)" -ForegroundColor Yellow }
+            Pause-Return
+        }
+        elseif ($c -eq "2") {
+            Clear-Host
+            Write-Host "=== Full SMART (-x) ===" -ForegroundColor Cyan
+            Write-Host "  [1] View on screen"
+            Write-Host "  [2] Save to TXT"
+            Write-Host "  [3] Back"
+            $cc = Read-Esc "Chon: "
+            if ($cc -eq $Global:ESC -or $cc -eq "3") { continue }
+            $out = Invoke-Smartctl "-x \\.\PhysicalDrive$DiskNumber"
+            if (-not $out) { Write-Host "(Khong doc duoc)" -ForegroundColor Yellow; Pause-Return; continue }
+            if ($cc -eq "1") {
+                Clear-Host
+                Write-Host "=== Full SMART (-x) ===" -ForegroundColor Cyan
+                Write-Host $out
+                Pause-Return
+            }
+            elseif ($cc -eq "2") {
+                $dest = [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), "smartctl_disk$DiskNumber`_$(Get-Date -Format yyyyMMdd_HHmmss).txt")
+                try {
+                    [System.IO.File]::WriteAllText($dest, $out)
+                    Write-Host "Da luu: $dest" -ForegroundColor Green
+                    Write-Log "Luu smartctl -x disk$DiskNumber vao $dest"
+                } catch {
+                    Write-Host "Loi luu file: $_" -ForegroundColor Red
+                }
+                Pause-Return
+            }
+        }
+    }
+}
+
+function Invoke-SurfaceTest {
+    param($DiskNumber, $DiskType)
+    Write-Host ""
+    Write-Host "=== SURFACE TEST - QUICK (READ-ONLY) ===" -ForegroundColor Cyan
+    Write-Host "Test nay kich hoat short self-test cua firmware o cung."
+    Write-Host "Doc lap, khong ghi du lieu. Thoi gian: 1-3 phut tuy loai o."
+    Write-Host ""
+
+    $c = Read-Esc "Tiep tuc kiem tra be mat? [Y/N]: "
+    if ($c.ToUpper() -ne "Y") { return }
+
+    Write-Host ""
+    Write-Host "Dang kich hoat short test..." -ForegroundColor Yellow
+    $trigger = Invoke-Smartctl "-t short \\.\PhysicalDrive$DiskNumber"
+    if ($trigger) {
+        # Chi hien dong dau de tranh roi man hinh
+        $firstLines = ($trigger -split "`n") | Select-Object -First 5
+        foreach ($l in $firstLines) { Write-Host $l -ForegroundColor Gray }
+    }
+
+    Write-Host ""
+    Write-Host "Dang theo doi tien do (ESC de dung theo doi)..." -ForegroundColor Cyan
+    Write-Host ""
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $maxWait = 300    # toi da 5 phut
+    $readErr = 0
+    $stopPolling = $false
+    $lastPct = 0
+    $done = $false
+
+    while ($sw.Elapsed.TotalSeconds -lt $maxWait -and -not $stopPolling -and -not $done) {
+        # Cho phep ESC de dung
+        if ([Console]::KeyAvailable) {
+            $k = [Console]::ReadKey($true)
+            if ($k.Key -eq 'Escape') {
+                $stopPolling = $true
+                break
+            }
+        }
+
+        $selftest = Invoke-Smartctl "-l seltest \\.\PhysicalDrive$DiskNumber"
+        $remainPct = $null
+        $statusLine = ""
+        $isDone = $false
+        $errCount = 0
+
+        if ($selftest) {
+            foreach ($line in ($selftest -split "`n")) {
+                # % remaining: vd "90% of test remaining"
+                if ($line -match '(\d+)%\s+of\s+test\s+remaining') {
+                    $remainPct = [int]$Matches[1]
+                }
+                if ($line -match 'Self-test execution status:\s*(.+)') {
+                    $statusLine = $Matches[1].Trim()
+                }
+                if ($line -match 'without error|completed successfully|Self-test routine in progress') {
+                    if ($line -match 'without error|completed successfully') { $isDone = $true }
+                }
+                # Loi doc trong log
+                if ($line -match 'Error\s+(\d+)\s+occurred') { $errCount++ }
+            }
+        }
+
+        if ($isDone) { $done = $true; $remainPct = 0 }
+
+        # Tinh % hoan thanh
+        $pct = if ($null -ne $remainPct) { 100 - $remainPct } else { $lastPct }
+        if ($pct -gt $lastPct) { $lastPct = $pct }
+        if ($pct -lt 0) { $pct = 0 }
+        if ($pct -gt 100) { $pct = 100 }
+
+        # Ve thanh 100 o
+        $filled = [int]($pct)          # 1% = 1 o
+        if ($filled -gt 100) { $filled = 100 }
+        $bar = ("#" * $filled) + ("-" * (100 - $filled))
+
+        Write-Host -NoNewline ("`rProgress : {0,3}%   Read Error : {1}   [{2}]" -f $pct, $readErr, $bar)
+        if ($statusLine) {
+            Write-Host -NoNewline ("   $statusLine" + " " * 10)
+        }
+
+        if ($done) { break }
+        Start-Sleep -Milliseconds 3000
+    }
+
+    Write-Host ""
+    Write-Host ""
+
+    if ($stopPolling) {
+        Write-Host "Da dung theo doi (test van co the dang chay trong nen o cung)." -ForegroundColor Yellow
+        Write-Host "Co the xem lai ket qua bang muc 'SMART Extras > 1. Self-Test Log'." -ForegroundColor Gray
+    } elseif ($done) {
+        Write-Host "=== KET QUA SURFACE TEST ===" -ForegroundColor Cyan
+        $final = Invoke-Smartctl "-l seltest \\.\PhysicalDrive$DiskNumber"
+        if ($final) {
+            $lines = ($final -split "`n") | Where-Object { $_ -match '\S' }
+            foreach ($l in $lines) { Write-Host $l }
+        }
+        Write-Host ""
+        Write-Host "Read Error: $readErr" -ForegroundColor $(if($readErr -eq 0){'Green'}else{'Red'})
+        if ($readErr -eq 0) {
+            Write-Host "Ket qua: Be mat o cung KHONG phat hien loi doc." -ForegroundColor Green
+        } else {
+            Write-Host "Ket qua: Phat hien $readErr loi doc. Nen backup du lieu ngay!" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "Het thoi gian theo doi (5 phut). Test co the van dang chay." -ForegroundColor Yellow
+    }
+    Write-Log "Surface Test disk$DiskNumber (readErr=$readErr)"
+}
+
+function Show-DiskDiagnostic {
+    Clear-Host; Write-Nav; Write-Host "=== DISK / SSD DIAGNOSTIC ===" -ForegroundColor Cyan
+    Write-Host "Cong cu chan doan o cung (HDD/SSD/NVMe) - Su dung smartctl." -ForegroundColor Gray
+    Write-Host ""
+
+    # Kiem tra smartctl
+    $smart = Get-SmartctlPath
+    if (-not $smart) {
+        Write-Host "Khong tai duoc smartctl.exe. Khong the chan doan chi tiet." -ForegroundColor Red
+        Pause-Return
+        return
+    }
+    Write-Host "Da co smartctl: $smart" -ForegroundColor Green
+    Write-Host ""
+
+    # Buoc 1: Liet ke o cung
+    $disks = Show-DiskList
+    if (-not $disks) { Pause-Return; return }
+
+    # Nhap lua chon
+    $choice = Read-Esc "Nhap Index o cung can kiem tra (ESC de huy): "
+    if ($choice -eq $Global:ESC) { return }
+    [int]$sel = 0
+    if (-not [int]::TryParse($choice.Trim(), [ref]$sel) -or $sel -lt 1 -or $sel -gt $disks.Count) {
+        Write-Host "Lua chon khong hop le." -ForegroundColor Red
+        Pause-Return; return
+    }
+    $disk = $disks[$sel - 1]
+    $diskNumber = [int]$disk.DeviceId
+    $diskType = Get-DiskTypeInfo $disk
+
+    # Buoc 2: Hien Disk Information + Partition/Free Space
+    Clear-Host; Write-Nav; Write-Host "=== DISK / SSD DIAGNOSTIC ===" -ForegroundColor Cyan
+    Write-Host ">> Da chon: [$sel] $($disk.FriendlyName) - $diskType" -ForegroundColor Yellow
+    Write-Host ""
+    Show-DiskInfoBlock -Disk $disk -DiskNumber $diskNumber
+
+    # Buoc 3: Xac nhan xem SMART
+    Write-Host "Nhan Enter de xem thong tin SMART (ESC de thoat)..." -ForegroundColor Cyan
+    $k = [Console]::ReadKey($true)
+    if ($k.Key -eq 'Escape') { return }
+
+    # Buoc 4: Hien SMART attributes
+    Clear-Host; Write-Nav; Write-Host "=== SMART INFORMATION ===" -ForegroundColor Cyan
+    Write-Host ">> Disk: $($disk.FriendlyName) - $diskType" -ForegroundColor Yellow
+    Write-Host ""
+    Show-SmartAttributes -Disk $disk -DiskNumber $diskNumber
+
+    # Buoc 5: SMART Extras
+    Show-SmartExtras -DiskNumber $diskNumber
+
+    # Buoc 6: Surface Test
+    Invoke-SurfaceTest -DiskNumber $diskNumber -DiskType $diskType
+    Write-Host ""
+    Write-Host "Hoan tat chan doan o cung." -ForegroundColor Green
+    Write-Log "Disk Diagnostic: disk$diskNumber ($diskType)"
     Pause-Return
 }
 
@@ -933,6 +1379,8 @@ function Menu-SystemInfo {
         "4"=@{Label="Kiem tra key ban quyen theo may";Action={Clear-Host;cscript //nologo "$env:windir\System32\slmgr.vbs" /dlv;Pause-Return}}
         "5"=@{Label="Go bo ban quyen (giu lai theo may)";Action={Remove-LicenseExceptMachine}}
         "6"=@{Label="Thiet lap Office (CanchinhOffice.exe)";Action={Run-CanchinhOffice}}
+        "7"=@{Label="Tool Hardware Check / Cong cu Kiem tra phan cung";Action={Run-HardwareTest}}
+        "8"=@{Label="DISK / SSD DIAGNOSTIC / Chan doan o cung";Action={Show-DiskDiagnostic}}
     })
 }
 
@@ -1183,6 +1631,8 @@ function Run-UC20 {
         Start-Process -FilePath $path -Verb RunAs -Wait
         Write-Log "Da chay UC20.exe"
         Remove-Item $path -Force -EA SilentlyContinue
+    } else {
+        Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
     }
 }
 
@@ -1234,7 +1684,7 @@ function Menu-Audio {
 }
 
 function Run-HardwareTest {
-    Clear-Host; Write-Nav; Write-Host "=== HARDWARE CHECK (HardwareTest.exe) ===" -ForegroundColor Cyan
+    Clear-Host; Write-Nav; Write-Host "=== TOOL HARDWARE CHECK (HardwareTest.exe) ===" -ForegroundColor Cyan
     $url = "https://www.dropbox.com/scl/fi/obzvj7tsrkfo3mpsxnb90/HardwareTest.exe?rlkey=i8s0kiwzugbxpzflzm1bd6bmn&st=9iecy4sc&dl=1"
     $path = "$env:TEMP\HardwareTest_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
     $ok = Download-WithProgress -Url $url -Dest $path -Name "HardwareTest.exe"
@@ -1243,6 +1693,8 @@ function Run-HardwareTest {
         Start-Process -FilePath $path -Verb RunAs -Wait
         Write-Log "Da chay HardwareTest.exe"
         Remove-Item $path -Force -EA SilentlyContinue
+    } else {
+        Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
     }
     Pause-Return
 }
@@ -1287,9 +1739,8 @@ function Menu-Maintenance {
         "5"=@{Label="Windows Standard / Cai dat chuan Windows";Action={Menu-WindowsStandard}}
         "6"=@{Label="Windows Update / Cap nhat Windows";Action={Menu-WindowsUpdate}}
         "7"=@{Label="Audio / Am thanh";Action={Menu-Audio}}
-        "8"=@{Label="Hardware Check / Kiem tra phan cung";Action={Run-HardwareTest}}
-        "9"=@{Label="Advanced Tools / Cong cu nang cao";Action={Menu-AdvancedTools}}
-        "10"=@{Label="Lam moi he thong / System Refresh";Action={Invoke-SystemRefresh}}
+        "8"=@{Label="Advanced Tools / Cong cu nang cao";Action={Menu-AdvancedTools}}
+        "9"=@{Label="Lam moi he thong / System Refresh";Action={Invoke-SystemRefresh}}
     })
 }
 
@@ -1321,6 +1772,8 @@ function Run-FontViet {
         Start-Process -FilePath $path -Verb RunAs -Wait
         Write-Log "Da chay 1398.exe (font tieng Viet)"
         Remove-Item $path -Force -EA SilentlyContinue
+    } else {
+        Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
     }
     Pause-Return
 }
@@ -1384,7 +1837,17 @@ function Show-MainMenu {
         Write-Host "6. Exit                     / Thoat"
         if ($Global:SessionUserNote) { Write-Host $Global:SessionUserNote -ForegroundColor Yellow }
         $c = Read-Esc "Chon muc: "
-        if ($c -eq $Global:ESC) { continue }
+        if ($c -eq $Global:ESC) {
+            $confirm = Read-Esc "Ban co chac muon thoat? [Y/N]: "
+            if ($confirm.ToUpper() -eq "Y") {
+                Write-Log "Nguoi dung thoat toolkit (ESC)"
+                Write-Host ""
+                Write-Host "Cam on da su dung." -ForegroundColor Cyan
+                Write-Host ""
+                return
+            }
+            continue
+        }
         switch ($c) {
             "1" { Menu-Network }
             "2" { Menu-PrinterSharing }
@@ -1419,7 +1882,8 @@ try {
         "$env:TEMP\UC20_*.exe",
         "$env:TEMP\CanchinhOffice_*.exe",
         "$env:TEMP\HardwareTest_*.exe",
-        "$env:TEMP\1398_*.exe"
+        "$env:TEMP\1398_*.exe",
+		"$env:TEMP\smartctl_toolkit.exe"
     )
     $deleted = [System.Collections.Generic.List[string]]::new()
     foreach ($pat in $patterns) {
