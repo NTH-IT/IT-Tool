@@ -987,7 +987,7 @@ function Show-DiskList {
     $disks = @(Get-PhysicalDisk | Sort-Object DeviceId)
     if ($disks.Count -eq 0) {
         Write-Host "Khong tim thay o cung nao." -ForegroundColor Red
-        return $null
+        return ,@()
     }
     Write-Host ""
     Write-Host ("  {0,-4} {1,-28} {2,-10} {3,12} {4,-10}" -f "Idx", "Model", "Type", "Size(GB)", "Health") -ForegroundColor Cyan
@@ -1002,7 +1002,7 @@ function Show-DiskList {
         $i++
     }
     Write-Host ""
-    return $disks
+    return ,$disks
 }
 
 function Show-DiskInfoBlock {
@@ -1331,17 +1331,35 @@ function Show-DiskDiagnostic {
     $disks = Show-DiskList
     if (-not $disks) { Pause-Return; return }
 
-    # Nhap lua chon
+    # Nhap lua chon. Cho phep nhap lai neu sai, khong thoat ra ngoai
+	$disk = $null
+	$sel  = 0
+	$maxIdx = @($disks).Count
+while ($true) {
     $choice = Read-Esc "Nhap Index o cung can kiem tra (ESC de huy): "
     if ($choice -eq $Global:ESC) { return }
-    [int]$sel = 0
-    if (-not [int]::TryParse($choice.Trim(), [ref]$sel) -or $sel -lt 1 -or $sel -gt $disks.Count) {
-        Write-Host "Lua chon khong hop le." -ForegroundColor Red
-        Pause-Return; return
+
+    # Loai bo moi ky tu khong phai chu so
+    $clean = ($choice -replace '[^\d]', '').Trim()
+    if ($clean -eq "") {
+        Write-Host "Vui long nhap so tu 1 den $maxIdx." -ForegroundColor Red
+        continue
     }
-    $disk = $disks[$sel - 1]
-    $diskNumber = [int]$disk.DeviceId
-    $diskType = Get-DiskTypeInfo $disk
+    [int]$num = 0
+    if (-not [int]::TryParse($clean, [ref]$num)) {
+        Write-Host "Khong phai so hop le." -ForegroundColor Red
+        continue
+    }
+    if ($num -lt 1 -or $num -gt $maxIdx) {
+        Write-Host "Ngoai pham vi. Chi chap nhan 1..$maxIdx." -ForegroundColor Red
+        continue
+    }
+    $sel  = $num
+    $disk = @($disks)[$sel - 1]
+    break
+}
+	$diskNumber = [int]$disk.DeviceId
+	$diskType = Get-DiskTypeInfo $disk
 
     # Buoc 2: Hien Disk Information + Partition/Free Space
     Clear-Host; Write-Nav; Write-Host "=== DISK / SSD DIAGNOSTIC ===" -ForegroundColor Cyan
