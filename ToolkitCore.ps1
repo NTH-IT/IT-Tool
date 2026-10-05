@@ -1950,7 +1950,7 @@ function Show-MainMenu {
         Clear-Host
         Write-Host "========================================" -ForegroundColor Cyan
         Write-Host " BO CONG CU DA DUNG CHO WINDOWS"
-        Write-Host " Phat trien boi Mr.Hai"
+        Write-Host " Phat trien boi Mr.Hai 2026"
         Write-Host "========================================" -ForegroundColor Cyan
         Write-Host "1. Network Troubleshoot     / Xu ly su co mang"
         Write-Host "2. Printer & File Sharing   / May in va chia se file"
