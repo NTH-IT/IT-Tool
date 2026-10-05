@@ -315,15 +315,118 @@ function Get-SmartctlPath {
 }
 
 function Invoke-Smartctl {
-    param([string]$Args)
+    param([string[]]$Arguments)
     $exe = Get-SmartctlPath
     if (-not $exe) { return $null }
     try {
-        $out = & $exe $Args.Split(' ') 2>&1 | Out-String
+        $out = & $exe @Arguments 2>&1 | Out-String
         return $out
     } catch {
-        return $null
+        return "ERROR: $_"
     }
+}
+
+# Goi smartctl theo DiskNumber, tu dong them -d <type>
+function Invoke-SmartctlDisk {
+    param([int]$DiskNumber, [string[]]$ExtraArgs)
+    $exe = Get-SmartctlPath
+    if (-not $exe) { return $null }
+
+    $map = $Global:SmartctlDiskMap
+    if (-not $map) {
+        $map = Get-SmartctlScanMap
+        $Global:SmartctlDiskMap = $map
+    }
+
+    if (-not $map.ContainsKey($DiskNumber)) {
+        # Fallback: thu \\.\PhysicalDriveN truc tiep
+        $args2 = $ExtraArgs + "\\.\PhysicalDrive$DiskNumber"
+        return Invoke-Smartctl -Arguments $args2
+    }
+
+    $info = $map[$DiskNumber]
+    # Cau truc lenh: <args> <device> -d <type>
+    $args2 = $ExtraArgs + $info.Dev + @('-d', $info.Type)
+    return Invoke-Smartctl -Arguments $args2
+}
+
+# Tra ve hashtable: DiskNumber (int) -> @{ Dev = '/dev/sda'; Type = 'nvme' }
+function Get-SmartctlScanMap {
+    $exe = Get-SmartctlPath
+    if (-not $exe) { return @{} }
+
+    $map = @{}
+
+    # 1. Lay danh sach device tu --scan
+    $scan = & $exe --scan 2>&1 | Out-String
+    if (-not $scan) { return @{} }
+
+    $devices = @()
+    foreach ($line in ($scan -split "`n")) {
+        # Dang: /dev/sda -d nvme # /dev/sda, NVMe device
+        if ($line -match '^(/dev/\w+)\s+-d\s+(\w+)') {
+            $devices += @{ Dev = $Matches[1]; Type = $Matches[2] }
+        }
+    }
+    if ($devices.Count -eq 0) { return @{} }
+
+    # 2. Voi moi device, doc serial + model
+    $infoList = @()
+    foreach ($d in $devices) {
+        $out = & $exe -i $d.Dev -d $d.Type 2>&1 | Out-String
+        $serial = ""
+        $model  = ""
+        $capacity = 0
+        foreach ($ln in ($out -split "`n")) {
+            if ($ln -match 'Serial Number:\s*([^\r\n]+)') { $serial = $Matches[1].Trim() }
+            if ($ln -match 'Device Model:\s*([^\r\n]+)')  { $model  = $Matches[1].Trim() }
+            if ($ln -match 'Model Number:\s*([^\r\n]+)')  { $model  = $Matches[1].Trim() }
+            if ($ln -match 'User Capacity:\s*([\d,]+)')   { $capacity = [long]($Matches[1] -replace ',','') }
+        }
+        $infoList += @{
+            Dev      = $d.Dev
+            Type     = $d.Type
+            Serial   = $serial
+            Model    = $model
+            Capacity = $capacity
+        }
+    }
+
+    # 3. Lay danh sach PhysicalDisk cua Windows
+    $pdList = @(Get-PhysicalDisk | Sort-Object DeviceId)
+
+    # 4. Map theo Serial truoc, fallback theo Model
+    foreach ($pd in $pdList) {
+        $diskNum = [int]$pd.DeviceId
+        $pdSerial = "$($pd.SerialNumber)".Trim()
+        $pdModel  = "$($pd.FriendlyName)".Trim()
+        $pdSize   = [long]$pd.Size
+
+        # Uu tien khop Serial
+        $match = $infoList | Where-Object {
+            $_.Serial -and $pdSerial -and ($_.Serial -ieq $pdSerial)
+        } | Select-Object -First 1
+
+        # Fallback: khop Model + Capacity gan dung
+        if (-not $match) {
+            $match = $infoList | Where-Object {
+                $_.Model -and $pdModel -and
+                ($_.Model -like "*$pdModel*" -or $pdModel -like "*$_.Model*") -and
+                ([math]::Abs($_.Capacity - $pdSize) -lt 1GB)
+            } | Select-Object -First 1
+        }
+
+        # Fallback cuoi: map theo thu tu
+        if (-not $match -and $infoList.Count -eq $pdList.Count) {
+            $match = $infoList[[array]::IndexOf($pdList, $pd)]
+        }
+
+        if ($match) {
+            $map[$diskNum] = @{ Dev = $match.Dev; Type = $match.Type; Serial = $match.Serial; Model = $match.Model }
+        }
+    }
+
+    return $map
 }
 
 # ============================================================
@@ -1014,13 +1117,13 @@ function Show-DiskInfoBlock {
     $partStyle = try { (Get-Disk -Number $DiskNumber -EA Stop).PartitionStyle } catch { "Unknown" }
 
     $fw = "N/A"; $serial = "N/A"; $temp = "N/A"
-    $smartInfo = Invoke-Smartctl "-i \\.\PhysicalDrive$DiskNumber"
+    $smartInfo = Invoke-SmartctlDisk -DiskNumber $DiskNumber -ExtraArgs @('-i')
     if ($smartInfo) {
-        if ($smartInfo -match 'Firmware Version:\s*(.+)') { $fw = $Matches[1].Trim() }
-        if ($smartInfo -match 'Serial Number:\s*(.+)')     { $serial = $Matches[1].Trim() }
+        if ($smartInfo -match 'Firmware Version:\s*([^\r\n]+)') { $fw = $Matches[1].Trim() }
+        if ($smartInfo -match 'Serial Number:\s*([^\r\n]+)')     { $serial = $Matches[1].Trim() }
     }
-    $smartAll = Invoke-Smartctl "-A \\.\PhysicalDrive$DiskNumber"
-    if ($smartAll -match 'Temperature:\s*(\d+)') { $temp = "$($Matches[1]) C" }
+    $smartAll = Invoke-SmartctlDisk -DiskNumber $DiskNumber -ExtraArgs @('-A')
+    if ($smartAll -match 'Temperature:\s*(\d+)') { $temp = "$($Matches[1]) C" }	
 
     Write-Host "--- Disk Information ---" -ForegroundColor Cyan
     Write-Host ("  Model            : {0}" -f $pd.FriendlyName)
@@ -1063,7 +1166,7 @@ function Show-SmartAttributes {
     $isSsd  = $pd.MediaType -eq 'SSD'
     $isHdd  = -not $isSsd -and -not $isNvme
 
-    $smart = Invoke-Smartctl "-A \\.\PhysicalDrive$DiskNumber"
+    $smart = Invoke-SmartctlDisk -DiskNumber $DiskNumber -ExtraArgs @('-A')
     if (-not $smart) {
         Write-Host "Khong doc duoc SMART (can smartctl hoac o khong ho tro)." -ForegroundColor Yellow
         return
@@ -1165,7 +1268,7 @@ function Show-SmartExtras {
         if ($c -eq "1") {
             Clear-Host
             Write-Host "=== Self-Test Log ===" -ForegroundColor Cyan
-            $out = Invoke-Smartctl "-l seltest \\.\PhysicalDrive$DiskNumber"
+			$out = Invoke-SmartctlDisk -DiskNumber $DiskNumber -ExtraArgs @('-l', 'selftest')
             if ($out) { Write-Host $out } else { Write-Host "(Khong doc duoc)" -ForegroundColor Yellow }
             Pause-Return
         }
@@ -1177,7 +1280,7 @@ function Show-SmartExtras {
             Write-Host "  [3] Back"
             $cc = Read-Esc "Chon: "
             if ($cc -eq $Global:ESC -or $cc -eq "3") { continue }
-            $out = Invoke-Smartctl "-x \\.\PhysicalDrive$DiskNumber"
+			$out = Invoke-SmartctlDisk -DiskNumber $DiskNumber -ExtraArgs @('-x') 
             if (-not $out) { Write-Host "(Khong doc duoc)" -ForegroundColor Yellow; Pause-Return; continue }
             if ($cc -eq "1") {
                 Clear-Host
@@ -1213,7 +1316,7 @@ function Invoke-SurfaceTest {
 
     Write-Host ""
     Write-Host "Dang kich hoat short test..." -ForegroundColor Yellow
-    $trigger = Invoke-Smartctl "-t short \\.\PhysicalDrive$DiskNumber"
+	$trigger = Invoke-SmartctlDisk -DiskNumber $DiskNumber -ExtraArgs @('-t', 'short')
     if ($trigger) {
         # Chi hien dong dau de tranh roi man hinh
         $firstLines = ($trigger -split "`n") | Select-Object -First 5
@@ -1240,8 +1343,7 @@ function Invoke-SurfaceTest {
                 break
             }
         }
-
-        $selftest = Invoke-Smartctl "-l seltest \\.\PhysicalDrive$DiskNumber"
+        $selftest = Invoke-SmartctlDisk -DiskNumber $DiskNumber -ExtraArgs @('-l', 'selftest')
         $remainPct = $null
         $statusLine = ""
         $isDone = $false
@@ -1294,7 +1396,7 @@ function Invoke-SurfaceTest {
         Write-Host "Co the xem lai ket qua bang muc 'SMART Extras > 1. Self-Test Log'." -ForegroundColor Gray
     } elseif ($done) {
         Write-Host "=== KET QUA SURFACE TEST ===" -ForegroundColor Cyan
-        $final = Invoke-Smartctl "-l seltest \\.\PhysicalDrive$DiskNumber"
+        $final = Invoke-SmartctlDisk -DiskNumber $DiskNumber -ExtraArgs @('-l', 'selftest')		
         if ($final) {
             $lines = ($final -split "`n") | Where-Object { $_ -match '\S' }
             foreach ($l in $lines) { Write-Host $l }
@@ -1325,6 +1427,9 @@ function Show-DiskDiagnostic {
         return
     }
     Write-Host "Da co smartctl: $smart" -ForegroundColor Green
+
+    # Reset cache map device
+    $Global:SmartctlDiskMap = $null
     Write-Host ""
 
     # Buoc 1: Liet ke o cung
