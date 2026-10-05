@@ -1423,61 +1423,184 @@ function Invoke-CleanupFlow {
         "Minidump"     = "$env:windir\Minidump"
     }
     Clear-Host; Write-Nav; Write-Host "=== CLEANUP ANALYSIS ===" -ForegroundColor Cyan
-    $total = 0
-    foreach ($k in $quickFolders.Keys) {$sz = Get-FolderSizeMB $quickFolders[$k]; $total += $sz
-        Write-Host ("{0,-24} {1,8:F2} MB" -f $k,$sz)
+
+    # ---- Dictionary luu (Y position, ten, size) cua tung dong de update sau ----
+    $rowPos   = [ordered]@{}   # key = ten -> @{ Y = int; Size = double }
+    $total    = 0
+    $nameCol  = 26             # do rong cot ten (khop voi "{0,-24}" + khoang trang)
+
+    function Write-AnalysisRow {
+        param([string]$Name, [double]$SizeMB)
+        $y = [Console]::CursorTop
+        Write-Host ("{0,-24} {1,8:F2} MB" -f $Name, $SizeMB)
+        return $y
     }
+
+    # In tung dong Quick
+    foreach ($k in $quickFolders.Keys) {
+        $sz = Get-FolderSizeMB $quickFolders[$k]
+        $total += $sz
+        $y = Write-AnalysisRow $k $sz
+        $rowPos[$k] = @{ Y = $y; Size = $sz }
+    }
+    # Firefox
     $ffProfiles = Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles" -Directory -EA SilentlyContinue
     $ffSize = 0
-    if ($ffProfiles) { $ffProfiles | ForEach-Object {$ffSize += Get-FolderSizeMB "$($_.FullName)\cache2" } }
-    if ($ffSize -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Firefox Cache", $ffSize); $total += $ffSize }
-    
+    if ($ffProfiles) { $ffProfiles | ForEach-Object { $ffSize += Get-FolderSizeMB "$($_.FullName)\cache2" } }
+    if ($ffSize -gt 0) {
+        $total += $ffSize
+        $y = Write-AnalysisRow "Firefox Cache" $ffSize
+        $rowPos["Firefox Cache"] = @{ Y = $y; Size = $ffSize }
+    }
+    # Thumbnail
     $thumbDir   = "$env:LOCALAPPDATA\Microsoft\Windows\Explorer"
     $thumbFiles = @(Get-Item "$thumbDir\thumbcache_*.db", "$thumbDir\iconcache_*.db" -EA SilentlyContinue)
     $thumbMB    = [math]::Round(($thumbFiles | Measure-Object -Property Length -Sum).Sum / 1MB, 2)
-    if ($thumbMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Thumbnail Cache", $thumbMB); $total += $thumbMB }
-    
+    if ($thumbMB -gt 0) {
+        $total += $thumbMB
+        $y = Write-AnalysisRow "Thumbnail Cache" $thumbMB
+        $rowPos["Thumbnail Cache"] = @{ Y = $y; Size = $thumbMB }
+    }
+    # Deep items
     if ($Deep) {
-        foreach ($k in $deepExtra.Keys) {$sz = Get-FolderSizeMB $deepExtra[$k]; $total += $sz
-            Write-Host ("{0,-24} {1,8:F2} MB" -f $k,$sz)
+        foreach ($k in $deepExtra.Keys) {
+            $sz = Get-FolderSizeMB $deepExtra[$k]
+            $total += $sz
+            $y = Write-AnalysisRow $k $sz
+            $rowPos[$k] = @{ Y = $y; Size = $sz }
         }
         $rbMB = Get-FolderSizeMB "$($env:SystemDrive)\`$Recycle.Bin"
-        Write-Host ("{0,-24} {1,8:F2} MB" -f "Recycle Bin", $rbMB); $total += $rbMB
+        $total += $rbMB
+        $y = Write-AnalysisRow "Recycle Bin" $rbMB
+        $rowPos["Recycle Bin"] = @{ Y = $y; Size = $rbMB }
+
         $dumpMB = 0
-        if (Test-Path "$env:windir\MEMORY.DMP") { $dumpMB = [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length / 1MB, 2) }
-        if ($dumpMB -gt 0) { Write-Host ("{0,-24} {1,8:F2} MB" -f "Memory Dump", $dumpMB); $total += $dumpMB }
+        if (Test-Path "$env:windir\MEMORY.DMP") {
+            $dumpMB = [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length / 1MB, 2)
+        }
+        if ($dumpMB -gt 0) {
+            $total += $dumpMB
+            $y = Write-AnalysisRow "Memory Dump" $dumpMB
+            $rowPos["Memory Dump"] = @{ Y = $y; Size = $dumpMB }
+        }
     }
+
     Write-Host ("-" * 34)
     Write-Host ("{0,-24} {1,8:F2} MB" -f "Potentially removable", [math]::Round($total, 2)) -ForegroundColor Yellow
+
+    # Luu vi tri dong "Potentially removable" de co the ghi de sau khi xoa xong
+    $totalRowY = [Console]::CursorTop - 1
+
     $ans = Read-Esc "`nClean selected items? [Y/N] (ESC de huy): "
     if ($ans -eq $Global:ESC -or $ans.ToUpper() -ne "Y") { Pause-Return; return }
-    Write-Host "`nDang don dep..." -ForegroundColor Cyan
-    foreach ($k in $quickFolders.Keys) {
-        Remove-Item "$($quickFolders[$k])\*" -Recurse -Force -Exclude 'toolkit_actions_*.log','ToolkitCore_*.ps1' -EA SilentlyContinue
+
+    Write-Host ""
+    Write-Host "Dang don dep..." -ForegroundColor Cyan
+
+    # ---- Helper cap nhat trang thai 1 dong ----
+    function Set-RowStatus {
+        param([string]$Name, [string]$Status, [string]$Color = "Green")
+        if (-not $rowPos.Contains($Name)) { return }
+        $savedY = [Console]::CursorTop
+        $savedX = [Console]::CursorLeft
+        try {
+            # Dat con tro vao cuoi dong cua muc nay, cot 36
+            [Console]::SetCursorPosition(36, $rowPos[$Name].Y)
+            Write-Host ("  [{0}]" -f $Status) -ForegroundColor $Color -NoNewline
+        } catch {}
+        # Tra con tro ve vi tri cu
+        try { [Console]::SetCursorPosition($savedX, $savedY) } catch {}
     }
-    if ($ffProfiles) { $ffProfiles | ForEach-Object { Remove-Item "$($_.FullName)\cache2\*" -Recurse -Force -EA SilentlyContinue } }
-    $thumbFiles | ForEach-Object { Remove-Item $_.FullName -Force -EA SilentlyContinue }
+
+    # ---- Xoa tung muc + cap nhat trang thai ----
+    foreach ($k in $quickFolders.Keys) {
+        try {
+            Remove-Item "$($quickFolders[$k])\*" -Recurse -Force `
+                -Exclude 'toolkit_actions_*.log','ToolkitCore_*.ps1' -EA SilentlyContinue
+            Set-RowStatus $k "Da xoa" "Green"
+        } catch {
+            Set-RowStatus $k "Loi" "Red"
+        }
+    }
+
+    if ($ffProfiles) {
+        try {
+            $ffProfiles | ForEach-Object {
+                Remove-Item "$($_.FullName)\cache2\*" -Recurse -Force -EA SilentlyContinue
+            }
+            Set-RowStatus "Firefox Cache" "Da xoa" "Green"
+        } catch {
+            Set-RowStatus "Firefox Cache" "Loi" "Red"
+        }
+    }
+
+    if ($thumbMB -gt 0) {
+        try {
+            $thumbFiles | ForEach-Object { Remove-Item $_.FullName -Force -EA SilentlyContinue }
+            Set-RowStatus "Thumbnail Cache" "Da xoa" "Green"
+        } catch {
+            Set-RowStatus "Thumbnail Cache" "Loi" "Red"
+        }
+    }
+
     ipconfig /flushdns | Out-Null
+
     if ($Deep) {
-        foreach ($k in $deepExtra.Keys) { Remove-Item "$($deepExtra[$k])\*" -Recurse -Force -EA SilentlyContinue }
-        Clear-RecycleBin -Force -EA SilentlyContinue
-        Remove-Item "$env:windir\MEMORY.DMP" -Force -EA SilentlyContinue
+        foreach ($k in $deepExtra.Keys) {
+            try {
+                Remove-Item "$($deepExtra[$k])\*" -Recurse -Force -EA SilentlyContinue
+                Set-RowStatus $k "Da xoa" "Green"
+            } catch {
+                Set-RowStatus $k "Loi" "Red"
+            }
+        }
+        # Recycle Bin
+        try {
+            Clear-RecycleBin -Force -EA SilentlyContinue
+            Set-RowStatus "Recycle Bin" "Da xoa" "Green"
+        } catch {
+            Set-RowStatus "Recycle Bin" "Loi" "Red"
+        }
+        # Memory Dump
+        if ($dumpMB -gt 0) {
+            try {
+                Remove-Item "$env:windir\MEMORY.DMP" -Force -EA SilentlyContinue
+                Set-RowStatus "Memory Dump" "Da xoa" "Green"
+            } catch {
+                Set-RowStatus "Memory Dump" "Loi" "Red"
+            }
+        }
+        # SRU + Event Logs
         Stop-Service -Name DPS -Force -EA SilentlyContinue
         Remove-Item "$env:windir\System32\sru\*" -Force -EA SilentlyContinue
         Start-Service -Name DPS -EA SilentlyContinue
         wevtutil el | ForEach-Object { wevtutil cl "$_" 2>$null }
     }
+
+    # ---- Tinh lai dung luong sau khi don ----
     $after = 0
     foreach ($k in $quickFolders.Keys) { $after += Get-FolderSizeMB $quickFolders[$k] }
     if ($Deep) {
         foreach ($k in $deepExtra.Keys) { $after += Get-FolderSizeMB $deepExtra[$k] }
         $after += Get-FolderSizeMB "$($env:SystemDrive)\`$Recycle.Bin"
-        if (Test-Path "$env:windir\MEMORY.DMP") { $after += [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length / 1MB, 2) }
+        if (Test-Path "$env:windir\MEMORY.DMP") {
+            $after += [math]::Round((Get-Item "$env:windir\MEMORY.DMP").Length / 1MB, 2)
+        }
     }
     $freed = [math]::Round($total - $after, 2)
-    if ($freed -lt 0) {$freed = 0 }
+    if ($freed -lt 0) { $freed = 0 }
+
+    # ---- Cap nhat dong "Potentially removable" thanh "Da giai phong" ----
+    try {
+        [Console]::SetCursorPosition(0, $totalRowY)
+        Write-Host ("{0,-24} {1,8:F2} MB" -f "Da giai phong", $freed) -ForegroundColor Green
+    } catch {}
+
+    # Di chuyen con tro xuong cuoi
+    try { [Console]::SetCursorPosition(0, [Math]::Min([Console]::BufferHeight - 2, $totalRowY + 2)) } catch {}
+    Write-Host ""
+    Write-Host "Da don xong. Da giai phong khoang: $freed MB" -ForegroundColor Green
     Write-Log "$(if($Deep){'Deep'}else{'Quick'}) Clean - freed ~$freed MB"
-    Write-Host "`nDa don xong. Da giai phong khoang: $freed MB" -ForegroundColor Green
     Pause-Return
 }
 
