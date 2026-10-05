@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableDelayedExpansion
 set "SESSION_ID=%RANDOM%%RANDOM%"
-set "WINTITLE=Toolkit Da Dung Cho Windows [%SESSION_ID%] - Phat trien boi Mr.Hai"
+set "WINTITLE=Toolkit Windows [%SESSION_ID%] - Phat trien boi Mr.Hai"
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     set "TOOLKIT_SESSION_ID=%SESSION_ID%"
