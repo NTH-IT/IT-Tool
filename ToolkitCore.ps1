@@ -2094,6 +2094,8 @@ function Menu-Software {
         "25" = @{ Label = "MiniTool Partition Wizard"; Action = { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" } }
         "26" = @{ Label = "Recoverit";               Action = { Open-Site "Recoverit" "https://recoverit.wondershare.com/" } }
         "27" = @{ Label = "Double Driver";           Action = { Open-Site "Double Driver" "https://download.com.vn/double-driver-25157" } }
+        "28" = @{ Label = "HiBit Uninstaller"; Action = { Open-Site "HiBit Uninstaller" "https://www.hibitsoft.ir/Uninstaller.html" } }
+        "29" = @{ Label = "Don rac BleachBit";  Action = { Open-Site "BleachBit" "https://www.bleachbit.org/download" } }
 
         # ===== NHOM E: PHAN MEM KHAC =====
         "__SEP__E"    = @{ Label = "" }
