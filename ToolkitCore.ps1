@@ -2033,16 +2033,85 @@ function Menu-BitLocker {
     Show-BitLockerMenu
 }
 
+# ============================================================
+# MICROSOFT ACTIVATION SCRIPTS (MAS) & LICENSE KEY CONVERTER
+# ============================================================
+function Invoke-MAS {
+    Clear-Host; Write-Nav; Write-Host "=== MICROSOFT ACTIVATION SCRIPTS (MAS) ===" -ForegroundColor Cyan
+    Write-Host "Cong cu kich hoat Windows/Office (open source)." -ForegroundColor Gray
+    Write-Host "Nguon: https://get.activated.win" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "CANH BAO: Chi su dung cho muc dich hoc tap / kich hoat hop phap." -ForegroundColor Yellow
+    Write-Host ""
+
+    if (-not (Confirm-Action "Ban chac chan muon chay MAS?")) { return }
+
+    Write-Host ""
+    Write-Host "[1/3] Dang thu cach 1: irm https://get.activated.win | iex" -ForegroundColor Yellow
+    $ok = $false
+    try {
+        Invoke-RestMethod "https://get.activated.win" -EA Stop | Invoke-Expression
+        $ok = $true
+        Write-Log "MAS lan 1 - OK"
+    } catch {
+        Write-Host "Cach 1 loi: $_" -ForegroundColor Red
+        Write-Log "MAS lan 1 - LOI: $_"
+    }
+
+    if (-not $ok) {
+        Write-Host ""
+        Write-Host "[2/3] Dang thu cach 2 (fallback qua Cloudflare DoH)..." -ForegroundColor Yellow
+        try {
+            $script = (curl.exe -s --doh-url https://1.1.1.1/dns-query https://get.activated.win | Out-String)
+            if ([string]::IsNullOrWhiteSpace($script)) { throw "Khong lay duoc noi dung script." }
+            Invoke-Expression $script
+            $ok = $true
+            Write-Log "MAS lan 2 - OK"
+        } catch {
+            Write-Host "Cach 2 loi: $_" -ForegroundColor Red
+            Write-Log "MAS lan 2 - LOI: $_"
+        }
+    }
+
+    if (-not $ok) {
+        Write-Host ""
+        Write-Host "[3/3] Ca 2 cach deu that bai." -ForegroundColor Red
+        Write-Host "Kiem tra ket noi Internet hoac DNS, sau do thu lai." -ForegroundColor Yellow
+        Write-Log "MAS - that bai ca 2 cach"
+    }
+    Pause-Return
+}
+
+function Run-LicenseKeyConverter {
+    Clear-Host; Write-Nav; Write-Host "=== LICENSE KEY CONVERTER 1.0.0 ===" -ForegroundColor Cyan
+    Write-Host "Cong cu chuyen doi / kiem tra ban quyen Windows." -ForegroundColor Gray
+    Write-Host ""
+    $url = "https://www.dropbox.com/scl/fi/4tx2dpe2k9igum9nakojw/LKC1.0.exe?rlkey=xjr6m4w9mcq44nv9zhkcm2sg1&st=zqnr3kyl&dl=1"
+    $path = "$env:TEMP\LKC1.0_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
+    $ok = Download-WithProgress -Url $url -Dest $path -Name "LKC1.0.exe"
+    if ($ok -and (Test-Path $path)) {
+        Write-Host "Dang chay LKC1.0.exe (quyen admin)..." -ForegroundColor Yellow
+        Start-Process -FilePath $path -Verb RunAs -Wait
+        Write-Log "Da chay LKC1.0.exe"
+        Remove-Item $path -Force -EA SilentlyContinue
+    } else {
+        Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
+    }
+    Pause-Return
+}
+
 function Menu-SystemInfo {
     Show-Menu -Title "3. SYSTEM INFO & ACTIVATION" -NavEntry "3" -Options ([ordered]@{
-        "1"=@{Label="Thong tin phan mem";Action={Show-SoftwareInfo}}
-        "2"=@{Label="Thong tin phan cung";Action={Show-HardwareInfoFull}}
-        "3"=@{Label="Thong tin ban quyen (Windows/Office)";Action={Show-LicenseInfo}}
-        "4"=@{Label="Kiem tra key ban quyen theo may";Action={Clear-Host;cscript //nologo "$env:windir\System32\slmgr.vbs" /dlv;Pause-Return}}
-        "5"=@{Label="Go bo ban quyen (giu lai theo may)";Action={Remove-LicenseExceptMachine}}
-        "6"=@{Label="Thiet lap Office (CanchinhOffice.exe)";Action={Run-CanchinhOffice}}
-        "7"=@{Label="Tool Hardware Check / Cong cu Kiem tra phan cung";Action={Run-HardwareTest}}
-        "8"=@{Label="DISK / SSD DIAGNOSTIC / Chan doan o cung";Action={Show-DiskDiagnostic}}
+        "1" =@{Label="Thong tin phan mem";Action={Show-SoftwareInfo}}
+        "2" =@{Label="Thong tin phan cung";Action={Show-HardwareInfoFull}}
+        "3" =@{Label="Thong tin ban quyen (Windows/Office)";Action={Show-LicenseInfo}}
+        "4" =@{Label="Kiem tra key ban quyen theo may";Action={Clear-Host;cscript //nologo "$env:windir\System32\slmgr.vbs" /dlv;Pause-Return}}
+        "5" =@{Label="Go bo ban quyen (giu lai theo may)";Action={Remove-LicenseExceptMachine}}
+        "6" =@{Label="Thiet lap Office (CanchinhOffice.exe)";Action={Run-CanchinhOffice}}
+        "7" =@{Label="Tool Hardware Check / Cong cu Kiem tra phan cung";Action={Run-HardwareTest}}
+        "8" =@{Label="DISK / SSD DIAGNOSTIC / Chan doan o cung";Action={Show-DiskDiagnostic}}
+        "9" =@{Label="Microsoft Activation Scripts (MAS)";Action={Invoke-MAS}}
+        "10"=@{Label="License Key Converter 1.0.0";Action={Run-LicenseKeyConverter}}
     })
 }
 
@@ -2593,30 +2662,31 @@ function Menu-Software {
         "11" = @{ Label = "Foxit PDF Reader";        Action = { Open-Site "Foxit PDF Reader" "https://www.foxit.com/pdf-reader/" } }
         "12" = @{ Label = "PDFgear (Edit PDF)";      Action = { Open-Site "PDFgear" "https://pdfgear.com/pdfgear-for-windows/" } }
         "13" = @{ Label = "Unikey";                  Action = { Open-Site "Unikey" "https://www.unikey.org/download.html" } }
-        "14" = @{ Label = "Cai dat font chu Viet Nam (1398.exe)"; Action = { Run-FontViet } }
+        "14" = @{ Label = "Cai dat font chu Viet Nam (1398)"; Action = { Run-FontViet } }
+        "15" = @{ Label = "EVKey";   Action = { Open-Site "EVKey" "https://evkeyvn.com" } }
 
         # ===== NHOM C: DA PHUONG TIEN =====
         "__SEP__C"    = @{ Label = "" }
         "__HEADER__C" = @{ Label = "C. Da phuong tien" }
-        "15" = @{ Label = "VLC Player";              Action = { Open-Site "VLC" "https://www.videolan.org/vlc/download-windows.html" } }
-        "16" = @{ Label = "CapCut";                  Action = { Open-Site "CapCut" "https://www.capcut.com/tools/pc-video-editor" } }
-        "17" = @{ Label = "OBS Studio";              Action = { Open-Site "OBS Studio" "https://obsproject.com/download" } }
-        "18" = @{ Label = "ImageGlass";              Action = { Open-Site "ImageGlass" "https://imageglass.org/" } }
-        "19" = @{ Label = "Fliqlo Screensaver";      Action = { Open-Site "Fliqlo Screensaver" "https://fliqlo.com/screensaver/" } }
-        "20" = @{ Label = "Bing Wallpaper";          Action = { Open-Site "Bing Wallpaper" "https://www.microsoft.com/en-us/bing/bing-wallpaper" } }
+        "16" = @{ Label = "VLC Player";              Action = { Open-Site "VLC" "https://www.videolan.org/vlc/download-windows.html" } }
+        "17" = @{ Label = "CapCut";                  Action = { Open-Site "CapCut" "https://www.capcut.com/tools/pc-video-editor" } }
+        "18" = @{ Label = "OBS Studio";              Action = { Open-Site "OBS Studio" "https://obsproject.com/download" } }
+        "19" = @{ Label = "ImageGlass";              Action = { Open-Site "ImageGlass" "https://imageglass.org/" } }
+        "20" = @{ Label = "Fliqlo Screensaver";      Action = { Open-Site "Fliqlo Screensaver" "https://fliqlo.com/screensaver/" } }
+        "21" = @{ Label = "Bing Wallpaper";          Action = { Open-Site "Bing Wallpaper" "https://www.microsoft.com/en-us/bing/bing-wallpaper" } }
 
         # ===== NHOM D: TIEN ICH HE THONG =====
         "__SEP__D"    = @{ Label = "" }
         "__HEADER__D" = @{ Label = "D. Tien ich he thong" }
-        "21" = @{ Label = "WinRAR";                  Action = { Open-Site "WinRAR" "https://www.rarlab.com/download.htm" } }
-        "22" = @{ Label = "AnyDesk";                 Action = { Open-Site "AnyDesk" "https://anydesk.com/en/downloads/windows" } }
-        "23" = @{ Label = "UltraViewer";             Action = { Open-Site "UltraViewer" "https://www.ultraviewer.net/en/download.html" } }
-        "24" = @{ Label = "Crystal Disk Info";       Action = { Open-Site "Crystal Disk Info" "https://crystalmark.info/en/download/" } }
-        "25" = @{ Label = "MiniTool Partition Wizard"; Action = { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" } }
-        "26" = @{ Label = "Recoverit";               Action = { Open-Site "Recoverit" "https://recoverit.wondershare.com/" } }
-        "27" = @{ Label = "Double Driver";           Action = { Open-Site "Double Driver" "https://download.com.vn/double-driver-25157" } }
-        "28" = @{ Label = "HiBit Uninstaller"; Action = { Open-Site "HiBit Uninstaller" "https://www.hibitsoft.ir/Uninstaller.html" } }
-        "29" = @{ Label = "Don rac BleachBit";  Action = { Open-Site "BleachBit" "https://www.bleachbit.org/download" } }
+        "22" = @{ Label = "WinRAR";                  Action = { Open-Site "WinRAR" "https://www.rarlab.com/download.htm" } }
+        "23" = @{ Label = "AnyDesk";                 Action = { Open-Site "AnyDesk" "https://anydesk.com/en/downloads/windows" } }
+        "24" = @{ Label = "UltraViewer";             Action = { Open-Site "UltraViewer" "https://www.ultraviewer.net/en/download.html" } }
+        "25" = @{ Label = "Crystal Disk Info";       Action = { Open-Site "Crystal Disk Info" "https://crystalmark.info/en/download/" } }
+        "26" = @{ Label = "MiniTool Partition Wizard"; Action = { Open-Site "MiniTool Partition Wizard" "https://www.partitionwizard.com/free-partition-manager.html" } }
+        "27" = @{ Label = "Recoverit";               Action = { Open-Site "Recoverit" "https://recoverit.wondershare.com/" } }
+        "28" = @{ Label = "Double Driver";           Action = { Open-Site "Double Driver" "https://download.com.vn/double-driver-25157" } }
+        "29" = @{ Label = "Go cai dat HiBit (HiBit Uninstaller)"; Action = { Open-Site "HiBit Uninstaller" "https://www.hibitsoft.ir/Uninstaller.html" } }
+        "30" = @{ Label = "Don file rac BleachBit";  Action = { Open-Site "BleachBit" "https://www.bleachbit.org/download" } }
 
         # ===== NHOM E: PHAN MEM KHAC =====
         "__SEP__E"    = @{ Label = "" }
@@ -2691,7 +2761,8 @@ try {
         "$env:TEMP\CanchinhOffice_*.exe",
         "$env:TEMP\HardwareTest_*.exe",
         "$env:TEMP\1398_*.exe",
-		"$env:TEMP\smartctl_toolkit.exe"
+        "$env:TEMP\LKC1.0_*.exe",
+        "$env:TEMP\smartctl_toolkit.exe"
     )
     $deleted = [System.Collections.Generic.List[string]]::new()
     foreach ($pat in $patterns) {
