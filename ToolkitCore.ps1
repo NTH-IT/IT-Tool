@@ -1214,16 +1214,16 @@ function Run-CanchinhOffice {
 
 function Menu-PrinterSharing {
     Show-Menu -Title "2. PRINTER & FILE SHARING" -NavEntry "2" -Options ([ordered]@{
-        "1"=@{Label="Chẩn đoán cài đặt chia sẻ file qua LAN (Firewall, SMB, Port, Services)";Action={Test-FileSharingLanAdvanced}}
-        "2"=@{Label="Quản lý chia sẻ LAN: Everyone, Guest & Windows Credentials";Action={Invoke-LanSharingMenu}}
-        "3"=@{Label="Restart Spooler (Xoá hàng đợi, quyền, restart)";Action={Invoke-RestartSpoolerFlow}}
-        "4"=@{Label="Reset USB Monitor";Action={Reset-USBMonitorPorts}}
-        "5"=@{Label="Reset PrinterPorts (Xóa cổng TCP/IP lỗi)";Action={Remove-BrokenTCPIpPorts}}
-        "6"=@{Label="Set LocalConnection (Kết nối không mật khẩu)";Action={Set-LocalConnectionNoPassword}}
-        "7"=@{Label="Chạy PrinterFixTool.exe";Action={Run-PrinterFixTool}}
-        "8"=@{Label="Mở Print Management";Action={Start-Process printmanagement.msc}}
-        "9"=@{Label="Mở Print server Properties";Action={Start-Process printui.exe -ArgumentList "/s /t2"}}
-        "10"=@{Label="Mở Device Manager";Action={Start-Process devmgmt.msc}}
+        "1"  = @{ Label = "Chan doan cai dat chia se file qua LAN (Firewall, SMB, Port, Services)"; Action = { Test-FileSharingLanAdvanced } }
+        "2"  = @{ Label = "Quan ly chia se LAN: Everyone, Guest & Windows Credentials"; Action = { Invoke-LanSharingMenu } }
+        "3"  = @{ Label = "Restart Spooler (Xoa hang doi, quyen, restart)"; Action = { Invoke-RestartSpoolerFlow } }
+        "4"  = @{ Label = "Reset USB Monitor"; Action = { Reset-USBMonitorPorts } }
+        "5"  = @{ Label = "Reset PrinterPorts (Xoa cong TCP/IP loi)"; Action = { Remove-BrokenTCPIpPorts } }
+        "6"  = @{ Label = "Set LocalConnection (Ket noi khong mat khau)"; Action = { Set-LocalConnectionNoPassword } }
+        "7"  = @{ Label = "Chay PrinterFixTool.exe"; Action = { Run-PrinterFixTool } }
+        "8"  = @{ Label = "Mo Print Management"; Action = { Start-Process printmanagement.msc } }
+        "9"  = @{ Label = "Mo Print server Properties"; Action = { Start-Process printui.exe -ArgumentList "/s /t2" } }
+        "10" = @{ Label = "Mo Device Manager"; Action = { Start-Process devmgmt.msc } }
     })
 }
 
@@ -1942,6 +1942,9 @@ foreach ($mod in @('Maintenance', 'Software', 'BitLocker')) {
     }
 }
 
+# ============================================================
+# MAIN MENU
+# ============================================================
 function Show-MainMenu {
     do {
         Clear-Host
@@ -1956,7 +1959,12 @@ function Show-MainMenu {
         Write-Host "  [6] BitLocker Management (Quan ly ma hoa o dia)"
         Write-Host "  [7] Thoat (Exit)"
         Write-Host "============================================================" -ForegroundColor Cyan
-        
+
+        if ($Global:SessionUserNote) {
+            Write-Host ""
+            Write-Host $Global:SessionUserNote -ForegroundColor Yellow
+        }
+
         $c = Read-Esc "Chon chuc nang [1-7]: "
 
         if ($c -eq $Global:ESC -or $c -eq "7") {
@@ -1966,19 +1974,19 @@ function Show-MainMenu {
                 Write-Host ""
                 Write-Host "Cam on da su dung." -ForegroundColor Cyan
                 Write-Host ""
-                return  # Thoat dut diem khoi toan bo script va chay khoi dan "finally" don dep
+                return   # ← Thoat function, finally se chay cleanup
             }
             continue
         }
 
         switch ($c) {
-            "1" { try { Menu-Network } catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            "1" { try { Menu-Network }        catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
             "2" { try { Menu-PrinterSharing } catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
-            "3" { try { Menu-SystemInfo } catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
-            "4" { try { _Menu-Maintenance } catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
-            "5" { try { _Menu-Software }    catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
-            "6" { try { _Menu-BitLocker }   catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
-            default { 
+            "3" { try { Menu-SystemInfo }     catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            "4" { try { _Menu-Maintenance }   catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            "5" { try { _Menu-Software }      catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            "6" { try { _Menu-BitLocker }     catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            default {
                 Write-Host "Lua chon khong hop le. Vui long chon tu 1 den 7." -ForegroundColor Yellow
                 Start-Sleep -Seconds 1
             }
@@ -1986,46 +1994,24 @@ function Show-MainMenu {
     } while ($true)
 }
 
-try {
-    Show-MainMenu
-} finally {
-    Write-Host "Dang don dep file tam..." -ForegroundColor Gray
-    $SID = $env:TOOLKIT_SESSION_ID
-    $patterns = @(
-        "$env:TEMP\ToolkitCore_$SID.ps1",
-        "$env:TEMP\Maintenance_$SID.ps1",
-        "$env:TEMP\Software_$SID.ps1",
-        "$env:TEMP\BitLocker_$SID.ps1",
-        "$env:TEMP\PrinterFixTool_*.exe",
-        "$env:TEMP\UC20_*.exe",
-        "$env:TEMP\CanchinhOffice_*.exe",
-        "$env:TEMP\HardwareTest_*.exe",
-        "$env:TEMP\1398_*.exe",
-        "$env:TEMP\LKC1.0_*.exe",
-        "$env:TEMP\smartctl_toolkit.exe"
-    )
-    $deleted = [System.Collections.Generic.List[string]]::new()
-    foreach ($pat in $patterns) {
-        Get-Item $pat -EA SilentlyContinue | ForEach-Object {
-            [void]$deleted.Add($_.Name)
-            Remove-Item $_.FullName -Force -EA SilentlyContinue
-        }
-    }
-    if ($deleted.Count -gt 0) {
-        Write-Host "Da xoa $($deleted.Count) file tam." -ForegroundColor Green
-    }
-    Start-Sleep 1
-}
-
-
 # ============================================================
 # EXECUTION & CLEANUP WRAPPER
 # ============================================================
 try {
     Show-MainMenu
+} catch {
+    Write-Host ""
+    Write-Host "LOI NGHIEM TRONG: $_" -ForegroundColor Red
+    Write-Host "Chi tiet da ghi vao: $LogFile" -ForegroundColor Gray
+    try {
+        "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] CRASH: $_" |
+            Out-File -FilePath $LogFile -Encoding UTF8 -Append
+    } catch {}
+    Start-Sleep -Seconds 3
 } finally {
     Write-Host ""
     Write-Host "Dang don dep file tam..." -ForegroundColor Gray
+
     $SID = $env:TOOLKIT_SESSION_ID
     $patterns = @(
         "$env:TEMP\ToolkitCore_$SID.ps1",
@@ -2040,6 +2026,7 @@ try {
         "$env:TEMP\LKC1.0_*.exe",
         "$env:TEMP\smartctl_toolkit.exe"
     )
+
     $deleted = [System.Collections.Generic.List[string]]::new()
     foreach ($pat in $patterns) {
         Get-Item $pat -EA SilentlyContinue | ForEach-Object {
@@ -2047,11 +2034,17 @@ try {
             Remove-Item $_.FullName -Force -EA SilentlyContinue
         }
     }
+
     if ($deleted.Count -gt 0) {
-        Write-Host "Da xoa $($deleted.Count) file tam." -ForegroundColor Green
-        foreach ($d in $deleted) { Write-Host "  - $d" -ForegroundColor Gray }
+        Write-Host "Da xoa $($deleted.Count) file tam:" -ForegroundColor Green
+        foreach ($d in $deleted) {
+            Write-Host "  - $d" -ForegroundColor DarkGray
+        }
     } else {
         Write-Host "Khong co file tam can xoa." -ForegroundColor Gray
     }
-    Start-Sleep 1
+
+    Write-Host ""
+    Write-Host "Phien lam viec ket thuc..." -ForegroundColor Cyan
+    Start-Sleep -Milliseconds 1500
 }
