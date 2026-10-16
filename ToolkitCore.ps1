@@ -897,7 +897,6 @@ function Test-FileSharingLanAdvanced {
                 Set-NetFirewallRule -DisplayGroup "File and Printer Sharing" -Enabled True -EA SilentlyContinue
                 Write-Host "  -> Da bat thanh cong cac rule Tuong lua cho chia se mang." -ForegroundColor Green
             } catch {
-				
                 Write-Host "  -> Loi khi bat Tuong lua: $_" -ForegroundColor Red
             }
         } else {
@@ -991,12 +990,10 @@ function Invoke-LanSharingMenu {
             "1" {
                 Clear-Host; Write-Nav; Write-Host "=== KIEM TRA QUYEN EVERYONE & GUEST ===" -ForegroundColor Cyan
                 
-                # Kiem tra tai khoan Guest
                 $guestAcc = Get-LocalUser -Name "Guest" -EA SilentlyContinue
                 $guestStatus = if ($guestAcc -and$guestAcc.Enabled) { "Dang BAT (Cho phép Guest truy cap)" } else { "Dang TAT (Khuyen nghi cho bao mat)" }
                 Write-Host "  - Tai khoan Guest      : $guestStatus" -ForegroundColor $(if($guestAcc -and$guestAcc.Enabled){'Yellow'}else{'Green'})
 
-                # Kiem tra chinh sách An danh / Guest Access Policy
                 $unsafeGuest = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "AllowInsecureGuestAuth" -EA SilentlyContinue).AllowInsecureGuestAuth
                 $guestAuthStr = if ($unsafeGuest -eq 1) { "Cho phep dang nhap Guest khong an toan ([OK cho chia se cu])" } else { "Bi chan (Chuan bao mat moi)" }
                 Write-Host "  - Insecure Guest Auth  : $guestAuthStr" -ForegroundColor Cyan
