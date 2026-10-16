@@ -870,11 +870,167 @@ function Menu-Network {
 # ============================================================
 function Add-CheckRow { param($L, [string]$N, [bool]$P, [string]$D = ""); [void]$L.Add([PSCustomObject]@{Hang_muc=$N; Ket_qua=$(if($P){"[OK]"}else{"[LOI]"}); Chi_tiet=$D}) }
 
-function Get-EnabledFwRules {
-    param([string]$GroupResId, [string]$DisplayGroup)
-    $rules = @(Get-NetFirewallRule -Group $GroupResId -EA SilentlyContinue)
-    if ($rules.Count -eq 0) { $rules = @(Get-NetFirewallRule -DisplayGroup $DisplayGroup -EA SilentlyContinue) }
-    return @($rules | Where-Object { $_.Enabled -eq 'True' })
+function Test-FileSharingLanAdvanced {
+    Clear-Host; Write-Nav; Write-Host "=== CHAN DOAN & THIET LAP CHIA SE FILE QUA LAN ===" -ForegroundColor Cyan
+    
+    # ========================================================
+    # BUOC 1: Kiem tra Firewall, SMB va Port 445
+    # ========================================================
+    Write-Host "`n[BUOC 1] Kiem tra Tuong lua (Firewall) & Giao thuc SMB..." -ForegroundColor Yellow
+    
+    # 1.1 Kiem tra Firewall Profiles & Rules
+    $fwProfile = Get-NetFirewallProfile -Profile Domain,Private,Public -EA SilentlyContinue$fwEnabled = ($fwProfile \vert{} Where-Object {$_.Enabled -eq 'True' }).Count
+    Write-Host "  - Trang thai Firewall Profiles dang bat: $fwEnabled / 3 profiles" -ForegroundColor Gray
+
+    $ndRules = @(Get-NetFirewallRule -DisplayGroup "Network Discovery" -EA SilentlyContinue | Where-Object { $_.Enabled -eq 'True' })$fsRules = @(Get-NetFirewallRule -DisplayGroup "File and Printer Sharing" -EA SilentlyContinue | Where-Object { $_.Enabled -eq 'True' })
+    
+    $ndStatus = if ($ndRules.Count -gt 0) { "Dang Bat ([OK])" } else { "Dang Tat ([X])" }
+    $fsStatus = if ($fsRules.Count -gt 0) { "Dang Bat ([OK])" } else { "Dang Tat ([X])" }
+    
+    Write-Host "  - Network Discovery      : $ndStatus" -ForegroundColor $(if($ndRules.Count -gt 0){'Green'}else{'Yellow'})
+    Write-Host "  - File & Printer Sharing : $fsStatus" -ForegroundColor $(if($fsRules.Count -gt 0){'Green'}else{'Yellow'})
+
+    if ($ndRules.Count -eq 0 -or $fsRules.Count -eq 0) {$c1 = Read-Esc "`nPhat hien Tuong lua dang chan chia se mang. Ban co muon tu dong BAT cac rule nay khong? [Y/N]: "
+        if ($c1.ToUpper() -eq "Y") {
+            try {
+                Set-NetFirewallRule -DisplayGroup "Network Discovery" -Enabled True -EA SilentlyContinue
+                Set-NetFirewallRule -DisplayGroup "File and Printer Sharing" -Enabled True -EA SilentlyContinue
+                Write-Host "  -> Da bat thanh cong cac rule Tuong lua cho chia se mang." -ForegroundColor Green
+            } catch {
+				
+                Write-Host "  -> Loi khi bat Tuong lua: $_" -ForegroundColor Red
+            }
+        } else {
+            Write-Host "  -> Bo qua, giu nguyen trang thai tuong lua." -ForegroundColor Gray
+        }
+    }
+
+    # 1.2 Kiem tra SMB Server & Port 445
+    $smbConfig = Get-SmbServerConfiguration -EA SilentlyContinue
+    $smb2State = if ($smbConfig.EnableSMB2Protocol) { "Bat ([OK])" } else { "Tat ([X])" }
+    Write-Host "  - Giao thuc SMBv2/v3      : $smb2State" -ForegroundColor $(if($smbConfig.EnableSMB2Protocol){'Green'}else{'Yellow'})
+
+    # Kiem tra Port 445 (TCP)
+    $port445 = Test-NetConnection -ComputerName "127.0.0.1" -Port 445 -WarningAction SilentlyContinue
+    $port445State = if ($port445.TcpTestSucceeded) { "Mo ([OK])" } else { "Bi chan / Dong ([X])" }
+    Write-Host "  - Port TCP 445 (SMB)     : $port445State" -ForegroundColor $(if($port445.TcpTestSucceeded){'Green'}else{'Red'})
+
+    if (-not $smbConfig.EnableSMB2Protocol -or -not $port445.TcpTestSucceeded) {
+        $c2 = Read-Esc "`nPhat hien SMB Server hoac Port 445 co van de. Ban co muon kich hoat SMBv2 va mo port khong? [Y/N]: "
+        if ($c2.ToUpper() -eq "Y") {
+            try {
+                Set-SmbServerConfiguration -EnableSMB2Protocol $true -Force -EA Stop
+                Write-Host "  -> Da kich hoat thanh cong SMBv2." -ForegroundColor Green
+            } catch {
+                Write-Host "  -> Loi khi bat SMB: $_" -ForegroundColor Red
+            }
+        }
+    }
+
+    # ========================================================
+    # BUOC 2: Kiem tra cac Services quan trọng cho chia sẻ LAN
+    # ========================================================
+    Write-Host "`n[BUOC 2] Kiem tra cac Dich vu (Services) mang..." -ForegroundColor Yellow
+    
+    $servicesToCheck = @(
+        @{ Name = "LanmanServer";      Desc = "Server (Chia se file va may in)" },
+        @{ Name = "LanmanWorkstation"; Desc = "Workstation (Ket noi mang)" },
+        @{ Name = "FDResPub";          Desc = "Function Discovery Resource Publication" },
+        @{ Name = "fdPHost";           Desc = "Function Discovery Provider Host" },
+        @{ Name = "DNS";               Desc = "DNS Client" },
+        @{ Name = "SSDPSRV";           Desc = "SSDP Discovery (Phat hien thiet bi)" },
+        @{ Name = "upnphost";          Desc = "UPnP Device Host" }
+    )
+
+    $stoppedServices = @()
+    foreach ($srv in $servicesToCheck) {
+        $s = Get-Service -Name $srv.Name -EA SilentlyContinue
+        $statusStr = if ($s -and $s.Status -eq 'Running') { "Dang chay ([OK])" } else { "Dang tat ([X])" }
+        $color = if ($s -and $s.Status -eq 'Running') { 'Green' } else { 'Yellow' }
+        Write-Host ("  - {0,-22} : {1}" -f $srv.Name, $statusStr) -ForegroundColor $color
+        if ($s -and $s.Status -ne 'Running') {
+            $stoppedServices += $srv
+        }
+    }
+
+    if ($stoppedServices.Count -gt 0) {
+        Write-Host "`nCo $($stoppedServices.Count) dich vu ho tro chia se dang bi tat." -ForegroundColor Yellow
+        $c3 = Read-Esc "Ban co muon tu dong BAT va dat che tu dong (Automatic) cho cac dich vu nay khong? [Y/N]: "
+        if ($c3.ToUpper() -ne "Y") {
+            Write-Host "  -> Bo qua khoi dong dich vu." -ForegroundColor Gray
+        } else {
+            foreach ($srv in$stoppedServices) {
+                try {
+                    Set-Service -Name $srv.Name -StartupType Automatic -EA SilentlyContinue
+                    Start-Service -Name $srv.Name -EA SilentlyContinue
+                    Write-Host "  -> Da khoi dong thanh cong: $($srv.Name)" -ForegroundColor Green
+                } catch {
+                    Write-Host "  -> Khong the khoi dong $($srv.Name):$_" -ForegroundColor Red
+                }
+            }
+        }
+    } else {
+        Write-Host "  -> Tat ca cac dich vu chia se qua mang deu dang hoat dong tot." -ForegroundColor Green
+    }
+
+    Write-Log "Chan doan & Thiet lap nang cao file sharing LAN"
+    Pause-Return
+}
+
+function Invoke-LanSharingMenu {
+    do {
+        Clear-Host; Write-Nav; Write-Host "=== QUAN LY & CAU HINH CHIA SE QUA LAN ===" -ForegroundColor Cyan
+        Write-Host "  [1] Kiem tra quyen 'Everyone' va Tai khoan Guest"
+        Write-Host "  [2] Cau hinh Chinh sach Credential & Mo Windows Credentials"
+        Write-Host "  [0] Quay lai"
+        Write-Host ""
+        $c = Read-Esc "Chon: "
+        if ($c -eq $Global:ESC -or$c -eq "0") { return }
+
+        switch ($c) {
+            "1" {
+                Clear-Host; Write-Nav; Write-Host "=== KIEM TRA QUYEN EVERYONE & GUEST ===" -ForegroundColor Cyan
+                
+                # Kiem tra tai khoan Guest
+                $guestAcc = Get-LocalUser -Name "Guest" -EA SilentlyContinue
+                $guestStatus = if ($guestAcc -and$guestAcc.Enabled) { "Dang BAT (Cho phép Guest truy cap)" } else { "Dang TAT (Khuyen nghi cho bao mat)" }
+                Write-Host "  - Tai khoan Guest      : $guestStatus" -ForegroundColor $(if($guestAcc -and$guestAcc.Enabled){'Yellow'}else{'Green'})
+
+                # Kiem tra chinh sách An danh / Guest Access Policy
+                $unsafeGuest = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "AllowInsecureGuestAuth" -EA SilentlyContinue).AllowInsecureGuestAuth
+                $guestAuthStr = if ($unsafeGuest -eq 1) { "Cho phep dang nhap Guest khong an toan ([OK cho chia se cu])" } else { "Bi chan (Chuan bao mat moi)" }
+                Write-Host "  - Insecure Guest Auth  : $guestAuthStr" -ForegroundColor Cyan
+
+                Write-Host "`n  [Huong dan quyen 'Everyone']:" -ForegroundColor Yellow
+                Write-Host "  De kiem tra quyen 'Everyone' tren 1 thu muc chia se cu the:"
+                Write-Host "  - Bam phim phai vao thu muc chia se -> Properties -> Sharing -> Advanced Sharing -> Permissions."
+                Write-Host "  - Dam bao co ten 'Everyone' va duoc tich chon 'Full Control' hoac 'Read'." -ForegroundColor Gray
+                
+                $ans = Read-Esc "`nBan co muon bat 'Insecure Guest Auth' (giup may khac truy cap khong can mat khau) khong? [Y/N]: "
+                if ($ans.ToUpper() -eq "Y") {
+                    try {
+                        Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" AllowInsecureGuestAuth 1 DWord
+                        Write-Host "  -> Da bat Insecure Guest Auth thanh cong." -ForegroundColor Green
+                    } catch {
+                        Write-Host "  -> Loi: $_" -ForegroundColor Red
+                    }
+                }
+                Pause-Return
+            }
+            "2" {
+                Clear-Host; Write-Nav; Write-Host "=== WINDOWS CREDENTIALS & CHINH SACH TRUY CAP ===" -ForegroundColor Cyan
+                Write-Host "Dang quan ly thong tin xac thuc luu tru (Credential Manager)..." -ForegroundColor Yellow
+                Write-Host "Neu may tinh khac khong truy cap duoc do loi 'Logon failure: unknown user name or bad password',"
+                Write-Host "ban can luu thong tin dang nhap (User/Pass) cua may dich vao day." -ForegroundColor Gray
+                
+                Write-Host "`nDang mo cua so Windows Credential Manager..." -ForegroundColor Green
+                Start-Process -FilePath "control.exe" -ArgumentList "/name Microsoft.CredentialManager"
+                
+                Write-Log "Mo Windows Credentials Manager"
+                Pause-Return
+            }
+        }
+    } while ($true)
 }
 
 function Test-FileSharingLan {
@@ -891,36 +1047,125 @@ function Test-FileSharingLan {
     Write-Log "Chan doan file sharing LAN"; Pause-Return
 }
 
-function Test-PrinterPipeline {
-    Clear-Host; Write-Nav; Write-Host "=== CHAN DOAN CAI DAT MAY IN ===" -ForegroundColor Cyan
-    $r = New-Object System.Collections.ArrayList
-    $s = Get-Service LanmanServer -EA SilentlyContinue; Add-CheckRow $r "Server (LanmanServer)" ($s.Status -eq 'Running') $s.Status
-    $rpc = Get-Service RpcSs -EA SilentlyContinue; Add-CheckRow $r "RPC (RpcSs)" ($rpc.Status -eq 'Running') $rpc.Status
-    $smb = Get-SmbServerConfiguration -EA SilentlyContinue; Add-CheckRow $r "SMB" ([bool]$smb.EnableSMB2Protocol) "SMB2=$($smb.EnableSMB2Protocol)"
-    $spl = Get-Service Spooler -EA SilentlyContinue; Add-CheckRow $r "Print Spooler" ($spl.Status -eq 'Running') $spl.Status
-    $fw = @(Get-EnabledFwRules "@FirewallAPI.dll,-28502" "File and Printer Sharing")
-    Add-CheckRow $r "Firewall" ($fw.Count -gt 0) "$($fw.Count) rule bat"
-    $sh = @(Get-Printer -EA SilentlyContinue | Where-Object Shared -eq $true); Add-CheckRow $r "Printer Share" ($sh.Count -gt 0) "$($sh.Count) may in share"
-    $drv = @(Get-PrinterDriver -EA SilentlyContinue); Add-CheckRow $r "Driver" ($drv.Count -gt 0) "$($drv.Count) driver"
-    $port = @(Get-PrinterPort -EA SilentlyContinue); Add-CheckRow $r "Port" ($port.Count -gt 0) "$($port.Count) port"
-    $pp = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint"
-    Add-CheckRow $r "Point&Print Policy" (Test-Path $pp) $(if(Test-Path $pp){"Co tuy chinh"}else{"Mac dinh"})
-    $r | Format-Table -AutoSize | Out-Host
-    Write-Log "Chan doan may in"; Pause-Return
+function Invoke-RestartSpoolerFlow {
+    Clear-Host; Write-Nav; Write-Host "=== RESTART SPOOLER & CLEAR QUEUE ===" -ForegroundColor Cyan
+    Write-Host "[1/4] Dang dung dich vu Print Spooler..." -ForegroundColor Yellow
+    Stop-Service Spooler -Force -EA SilentlyContinue
+
+    Write-Host "[2/4] Dang xoa hang doi va file tam in..." -ForegroundColor Yellow
+    $printerPath = "$env:windir\System32\spool\PRINTERS\*"
+    Remove-Item $printerPath -Force -Recurse -EA SilentlyContinue
+
+    Write-Host "[3/4] Cau hinh lai quyen dich vu (Permissions)..." -ForegroundColor Yellow
+    $sd = "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)"
+    & sc.exe sdset Spooler $sd 2>$null
+    Set-Service Spooler -StartupType Automatic -EA SilentlyContinue
+
+    Write-Host "[4/4] Khoi dong lai dich vu Spooler..." -ForegroundColor Yellow
+    Start-Service Spooler -EA SilentlyContinue
+
+    Write-Host "`nHoan tat khoi dong lai Print Spooler!" -ForegroundColor Green
+    Write-Log "Restart Spooler & Clear Queue"
+    Pause-Return
+}
+
+function Reset-USBMonitorPorts {
+    Run-Task "Reset USB Monitor" {
+        Write-Host "Dang dat lai USB Virtual Printer Ports..." -ForegroundColor Yellow
+        Stop-Service Spooler -Force -EA SilentlyContinue
+        & rundll32.exe printui.dll,PrintUIEntry /Xs /n "USB" PortName "USB001" 2>$null
+        Start-Service Spooler -EA SilentlyContinue
+        Write-Host "Da reset thanh cong USB Monitor." -ForegroundColor Green
+    }
+}
+
+function Remove-BrokenTCPIpPorts {
+    Clear-Host; Write-Nav; Write-Host "=== RESET PRINTER PORTS (Xoa Port TCP/IP loi) ===" -ForegroundColor Cyan
+    Write-Host "Dang quet danh sach cac cong may in TCP/IP..." -ForegroundColor Yellow
+    
+    $ports = @(Get-PrinterPort -EA SilentlyContinue \vert{} Where-Object {$_.PrinterPortType -eq 'TCIP' -or $_.PortType -eq 'TCPIP' -or$_.Protocol -eq 'Raw' })
+    if ($ports.Count -eq 0) {$ports = @(Get-CimInstance Win32_TCPIPPrinterPort -EA SilentlyContinue)
+    }
+
+    if ($ports.Count -eq 0) {
+        Write-Host "Khong tim thay cong may in TCP/IP nao." -ForegroundColor Yellow
+        Pause-Return
+        return
+    }
+
+    Write-Host ""
+    Write-Host ("  {0,-4} {1,-25} {2}" -f "Stt", "Ten Port", "Dia chi IP / Host") -ForegroundColor Cyan
+    Write-Host ("  " + ("-" * 45))
+    $i = 1
+    foreach ($p in$ports) {
+        $name = if ($p.Name) { $p.Name } else {$p.PortName }
+        $hostAddr = if ($p.HostAddress) { $p.HostAddress } else {$p.PrinterHostAddress }
+        Write-Host ("  {0,-4} {1,-25} {2}" -f "[$i]", $name, $hostAddr)$i++
+    }
+    Write-Host ""
+    $c = Read-Esc "Chon so thu tu port TCP/IP can xoa (nhap so hoac 'ALL' de xoa het, ESC huy): "
+    if ($c -eq$Global:ESC) { return }
+
+    if ($c.ToUpper() -eq "ALL") {
+        if (-not (Confirm-Action "Ban co chac muon XOA TOAN BO cong TCP/IP ke tren?")) { return }
+        foreach ($p in$ports) {
+            $pName = if ($p.Name) { $p.Name } else {$p.PortName }
+            try {
+                Remove-PrinterPort -Name $pName -EA Stop
+                Write-Host "  Da xoa port: $pName" -ForegroundColor Green
+            } catch {
+                Write-Host "  Loi xoa port $pName :$_" -ForegroundColor Red
+            }
+        }
+    } else {
+        $n = 0
+        if ([int]::TryParse(($c -replace '[^\d]',''), [ref]$n) -and $n -ge 1 -and$n -le $ports.Count) {$target = $ports[$n - 1]
+            $pName = if ($target.Name) { $target.Name } else {$target.PortName }
+            try {
+                Remove-PrinterPort -Name $pName -EA Stop
+                Write-Host "Da xoa port TCP/IP: $pName" -ForegroundColor Green
+                Write-Log "Xoa Printer TCP/IP Port: $pName"
+            } catch {
+                Write-Host "Loi xoa port: $_" -ForegroundColor Red
+            }
+        } else {
+            Write-Host "Lua chon khong hop le." -ForegroundColor Red
+        }
+    }
+    Pause-Return
+}
+
+function Set-LocalConnectionNoPassword {
+    Run-Task "Set LocalConnection (Khong mat khau)" {
+        Write-Host "Dang cau hinh chia se khong can mat khau (Password Protected Sharing = Off)..." -ForegroundColor Yellow
+        Set-NetConnectionProfile -NetworkCategory Private -EA SilentlyContinue
+        netsh advfirewall firewall set rule group="File and Printer Sharing" new enable=Yes | Out-Null
+        Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" LimitBlankPasswordUse 0
+        Set-Service LanmanServer -StartupType Automatic -EA SilentlyContinue
+        Start-Service LanmanServer -EA SilentlyContinue
+        Write-Host "Da hoan tat cau hinh chia se khong mat khau!" -ForegroundColor Green
+    }
 }
 
 function Run-PrinterFixTool {
     Clear-Host; Write-Nav; Write-Host "=== CHAY PrinterFixTool.exe ===" -ForegroundColor Cyan
     $url = "https://www.dropbox.com/scl/fi/dcikx3xca62823quaeuua/PrinterFixTool.exe?rlkey=4hcris5xdgp0x4syv9tpp87la&st=yk97weqx&dl=1"
     $path = "$env:TEMP\PrinterFixTool_$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
-    $ok = Download-WithProgress -Url $url -Dest $path -Name "PrinterFixTool.exe"
-    if ($ok -and (Test-Path $path)) {
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $ok = Download-WithProgress -Url $url -Dest$path -Name "PrinterFixTool.exe"
+    if ($ok -and (Test-Path$path)) {
         Write-Host "Dang chay PrinterFixTool.exe (quyen admin)..." -ForegroundColor Yellow
-        Start-Process -FilePath $path -Verb RunAs -Wait; $sw.Stop()
-        Write-Host "Thoi gian chay: $([math]::Round($sw.Elapsed.TotalSeconds,1)) giay" -ForegroundColor Green
-        Write-Log "Chay PrinterFixTool.exe - $([math]::Round($sw.Elapsed.TotalSeconds,1))s"
-        Remove-Item $path -Force -EA SilentlyContinue
+        $proc = Start-Process -FilePath$path -Verb RunAs -PassThru
+        
+        Start-Job -ScriptBlock {
+            param($pId,$filePath)
+            while (Get-Process -Id $pId -ErrorAction SilentlyContinue) {
+                Start-Sleep -Seconds 2
+            }
+            Remove-Item $filePath -Force -ErrorAction SilentlyContinue
+        } -ArgumentList $proc.Id, $path | Out-Null
+
+        Write-Log "Da chay PrinterFixTool.exe"
+        Write-Host "Tool da duoc mo o cua so rieng. Ban co the tiep tuc su dung menu." -ForegroundColor Green
     } else {
         Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
     }
@@ -929,9 +1174,16 @@ function Run-PrinterFixTool {
 
 function Menu-PrinterSharing {
     Show-Menu -Title "2. PRINTER & FILE SHARING" -NavEntry "2" -Options ([ordered]@{
-        "1"=@{Label="Chan doan cai dat chia se file qua LAN";Action={Test-FileSharingLan}}
-        "2"=@{Label="Chan doan cai dat may in";Action={Test-PrinterPipeline}}
-        "3"=@{Label="Chay PrinterFixTool.exe";Action={Run-PrinterFixTool}}
+        "1"=@{Label="Chẩn đoán cài đặt chia sẻ file qua LAN (Firewall, SMB, Port, Services)";Action={Test-FileSharingLanAdvanced}}
+        "2"=@{Label="Quản lý chia sẻ LAN: Everyone, Guest & Windows Credentials";Action={Invoke-LanSharingMenu}}
+        "3"=@{Label="Restart Spooler (Xoá hàng đợi, quyền, restart)";Action={Invoke-RestartSpoolerFlow}}
+        "4"=@{Label="Reset USB Monitor";Action={Reset-USBMonitorPorts}}
+        "5"=@{Label="Reset PrinterPorts (Xóa cổng TCP/IP lỗi)";Action={Remove-BrokenTCPIpPorts}}
+        "6"=@{Label="Set LocalConnection (Kết nối không mật khẩu)";Action={Set-LocalConnectionNoPassword}}
+        "7"=@{Label="Chạy PrinterFixTool.exe";Action={Run-PrinterFixTool}}
+        "8"=@{Label="Mở Print Management";Action={Start-Process printmanagement.msc}}
+        "9"=@{Label="Mở Print server Properties";Action={Start-Process printui.exe -ArgumentList "/s /t2"}}
+        "10"=@{Label="Mở Device Manager";Action={Start-Process devmgmt.msc}}
     })
 }
 
@@ -1085,9 +1337,18 @@ function Run-CanchinhOffice {
     $ok = Download-WithProgress -Url $url -Dest $path -Name "CanchinhOffice.exe"
     if ($ok -and (Test-Path $path)) {
         Write-Host "Dang chay CanchinhOffice.exe (quyen admin)..." -ForegroundColor Yellow
-        Start-Process -FilePath $path -Verb RunAs -Wait
+        $proc = Start-Process -FilePath $path -Verb RunAs -PassThru
+        
+        Start-Job -ScriptBlock {
+            param($pId, $filePath)
+            while (Get-Process -Id $pId -ErrorAction SilentlyContinue) {
+                Start-Sleep -Seconds 2
+            }
+            Remove-Item $filePath -Force -ErrorAction SilentlyContinue
+        } -ArgumentList $proc.Id, $path | Out-Null
+
         Write-Log "Da chay CanchinhOffice.exe"
-        Remove-Item $path -Force -EA SilentlyContinue
+        Write-Host "Tool da duoc kich hoat chay o cua so rieng." -ForegroundColor Green
     } else {
         Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
     }
@@ -1665,7 +1926,7 @@ function Show-MainMenu {
                 Write-Host ""
                 Write-Host "Cam on da su dung." -ForegroundColor Cyan
                 Write-Host ""
-                return
+                return  # Thoat dut diem khoi toan bo script va chay khoi dan "finally" don dep
             }
             continue
         }
@@ -1716,12 +1977,6 @@ try {
     Start-Sleep 1
 }
 
-try {
-    Show-MainMenu
-} finally {
-    # Cleanup
-}
-
 
 # ============================================================
 # EXECUTION & CLEANUP WRAPPER
@@ -1744,13 +1999,12 @@ try {
         "$env:TEMP\LKC1.0_*.exe",
         "$env:TEMP\smartctl_toolkit.exe"
     )
-    $deleted = [System.Collections.Generic.List[string]]::new()
     foreach ($pat in $patterns) {
         Get-Item $pat -EA SilentlyContinue | ForEach-Object {
-            [void]$deleted.Add($_.Name)
             Remove-Item $_.FullName -Force -EA SilentlyContinue
         }
     }
+}
     if ($deleted.Count -gt 0) {
         Write-Host "Da xoa $($deleted.Count) file:" -ForegroundColor Green
         foreach ($d in $deleted) { Write-Host "  - $d" -ForegroundColor Gray }

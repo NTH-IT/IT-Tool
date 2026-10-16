@@ -371,9 +371,15 @@ function Run-UC20 {
     $ok = Download-WithProgress -Url $url -Dest $path -Name "UC20.exe"
     if ($ok -and (Test-Path $path)) {
         Write-Host "Dang chay UC20.exe..." -ForegroundColor Yellow
-        Start-Process -FilePath $path -Verb RunAs -Wait
+        $proc = Start-Process -FilePath $path -Verb RunAs -PassThru
+        # Theo doi tien trinh chay ngam, van cho phep thao tac/thoat ma khong bi treo chet cung neu can, hoac doi tien trinh dong de xoa file
+        Register-ObjectEvent -InputObject $proc -EventName Exited -Action {
+            param($sender, $e)
+            Start-Sleep -Seconds 1
+            Remove-Item $event.MessageData -Force -EA SilentlyContinue
+            Unregister-Event -SourceIdentifier $EventArgs.SourceIdentifier -EA SilentlyContinue
+        } -MessageData $path | Out-Null
         Write-Log "Da chay UC20.exe"
-        Remove-Item $path -Force -EA SilentlyContinue
     } else {
         Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
     }
@@ -433,9 +439,18 @@ function Run-HardwareTest {
     $ok = Download-WithProgress -Url $url -Dest $path -Name "HardwareTest.exe"
     if ($ok -and (Test-Path $path)) {
         Write-Host "Dang chay HardwareTest.exe (quyen admin)..." -ForegroundColor Yellow
-        Start-Process -FilePath $path -Verb RunAs -Wait
+        $proc = Start-Process -FilePath $path -Verb RunAs -PassThru
+        
+        # Cho pheo tien trinh chay doc lap, dung try/finally dam bao xoa file tam khi tien trinh ket thuc
+        Start-Job -ScriptBlock {
+            param($pId, $filePath)
+            while (Get-Process -Id $pId -ErrorAction SilentlyContinue) {
+                Start-Sleep -Seconds 2
+            }
+            Remove-Item $filePath -Force -ErrorAction SilentlyContinue
+        } -ArgumentList $proc.Id, $path | Out-Null
+
         Write-Log "Da chay HardwareTest.exe"
-        Remove-Item $path -Force -EA SilentlyContinue
     } else {
         Write-Host "Da huy hoac tai that bai." -ForegroundColor Yellow
     }
