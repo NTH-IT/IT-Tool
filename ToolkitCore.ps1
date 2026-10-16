@@ -1,6 +1,9 @@
 # ============================================================
 #  BO CONG CU DA DUNG CHO WINDOWS - Phat trien boi Mr.Hai 2026
 # ============================================================
+if (-not $env:TOOLKIT_SESSION_ID) {
+    $env:TOOLKIT_SESSION_ID = [guid]::NewGuid().ToString('N').Substring(0,8)
+}
 $ErrorActionPreference = "Continue"
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
 $LogFile = "$env:TEMP\toolkit_actions_$(Get-Date -Format yyyyMMdd_HHmmss).log"
@@ -18,7 +21,7 @@ function Write-Nav {
 function Write-Log { 
     param([string]$M)
     $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $env:USERNAME | $M`r`n"
-    [System.IO.File]::AppendAllText($LogFile, $line)
+    try { [System.IO.File]::AppendAllText($LogFile, $line) } catch {}
 }
 
 function Test-IsAdmin {
@@ -1604,90 +1607,121 @@ function Menu-SystemInfo {
 #  MODULE LOADER - Tu dong tai module khi can
 # ============================================================
 $Global:LoadedModules = @{}
+$Global:ModuleFiles = @{
+    'Maintenance' = "https://cdn.jsdelivr.net/gh/NTH-IT/IT-Tool@main/Maintenance.ps1"
+    'Software'    = "https://cdn.jsdelivr.net/gh/NTH-IT/IT-Tool@main/Software.ps1"
+    'BitLocker'   = "https://cdn.jsdelivr.net/gh/NTH-IT/IT-Tool@main/BitLocker.ps1"
+}
 
-function Invoke-LoadModule {
+function Install-Module {
     param([string]$Name)
-    if ($Global:LoadedModules[$Name]) { return $true }
-    $urls = @{
-        'Maintenance' = "https://cdn.jsdelivr.net/gh/NTH-IT/IT-Tool@main/Maintenance.ps1"
-        'Software'    = "https://cdn.jsdelivr.net/gh/NTH-IT/IT-Tool@main/Software.ps1"
-        'BitLocker'   = "https://cdn.jsdelivr.net/gh/NTH-IT/IT-Tool@main/BitLocker.ps1"
-    }
-    if (-not $urls.ContainsKey($Name)) {
-        Write-Host "  Module $Name khong ton tai." -ForegroundColor Red; return $false
-    }
     $path = "$env:TEMP\${Name}_$($env:TOOLKIT_SESSION_ID).ps1"
     Write-Host "  Dang tai module $Name ..." -ForegroundColor Yellow
     try {
         $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $urls[$Name] -OutFile $path -UseBasicParsing -EA Stop
-        . $path
-        $Global:LoadedModules[$Name] = $true
-        Write-Host "  Module $Name san sang." -ForegroundColor Green
-        return $true
+        Invoke-WebRequest -Uri $Global:ModuleFiles[$Name] -OutFile $path -UseBasicParsing -EA Stop
+        return $path
     } catch {
-        Write-Host " Loi tai module ${Name}: $_" -ForegroundColor Red; return $false
+        Write-Host "  Loi tai module ${Name}: $_" -ForegroundColor Red
+        return $null
     }
 }
 
-# Stub: tu dong load module lan dau, goi ham noi bo
-function Menu-Maintenance { if (Invoke-LoadModule 'Maintenance') { _Menu-Maintenance } }
-function Menu-Software    { if (Invoke-LoadModule 'Software')    { _Menu-Software }    }
-function Menu-BitLocker   { if (Invoke-LoadModule 'BitLocker')   { _Menu-BitLocker }   }
+# ⭐ Load tất cả module ở TOP-LEVEL, KHÔNG bọc trong function
+foreach ($mod in @('Maintenance', 'Software', 'BitLocker')) {
+    $path = Install-Module -Name $mod
+    if ($path) {
+        try {
+            . $path
+            $Global:LoadedModules[$mod] = $true
+            Write-Host "  Module $mod san sang." -ForegroundColor Green
+        } catch {
+            Write-Host "  Loi dot-source module ${mod}: $_" -ForegroundColor Red
+        }
+    }
+}
 
 function Show-MainMenu {
     do {
         Clear-Host
-        Write-Host "========================================" -ForegroundColor Cyan
-        Write-Host " BO CONG CU DA DUNG CHO WINDOWS"
-        Write-Host " Phat trien boi Mr.Hai 2026"
-        Write-Host "========================================" -ForegroundColor Cyan
-        Write-Host "1. Network Troubleshoot     / Xu ly su co mang"
-        Write-Host "2. Printer & File Sharing   / May in va chia se file"
-        Write-Host "3. System Info & Activation / Thong tin he thong"
-        Write-Host "4. System Maintenance       / Bao tri he thong"
-        Write-Host "5. Software                 / Phan mem"
-        Write-Host "6. BitLocker                / Ma hoa o dia"
-        Write-Host "7. Exit                     / Thoat"
-        if ($Global:SessionUserNote) { Write-Host $Global:SessionUserNote -ForegroundColor Yellow }
-        $c = Read-Esc "Chon muc: "
-        if ($c -eq $Global:ESC) {
+        Write-Host "============================================================" -ForegroundColor Cyan
+        Write-Host "  BO CONG CU DA DUNG CHO WINDOWS - Mr.Hai 2026" -ForegroundColor Green
+        Write-Host "============================================================" -ForegroundColor Cyan
+        Write-Host "  [1] Network TroubleShoot (Chan doan & Sua loi mang)"
+        Write-Host "  [2] Printer & File Sharing (Chia se file & May in)"
+        Write-Host "  [3] System Info & Activation (Thong tin & Ban quyen)"
+        Write-Host "  [4] System Maintenance (Bao tri he thong & Don dep)"
+        Write-Host "  [5] Software (Cai dat phan mem tien ich)"
+        Write-Host "  [6] BitLocker Management (Quan ly ma hoa o dia)"
+        Write-Host "  [7] Thoat (Exit)"
+        Write-Host "============================================================" -ForegroundColor Cyan
+        
+        $c = Read-Esc "Chon chuc nang [1-7]: "
+
+        if ($c -eq $Global:ESC -or $c -eq "7") {
             $confirm = Read-Esc "Ban co chac muon thoat? [Y/N]: "
             if ($confirm.ToUpper() -eq "Y") {
-                Write-Log "Nguoi dung thoat toolkit (ESC)"
+                Write-Log "Nguoi dung thoat toolkit"
                 Write-Host ""
                 Write-Host "Cam on da su dung." -ForegroundColor Cyan
                 Write-Host ""
-                foreach ($mod in @('Maintenance','Software','BitLocker')) {
-                    Get-ChildItem "$env:TEMP\${mod}_*.ps1" -EA SilentlyContinue | Remove-Item -Force
-                }
                 return
             }
             continue
         }
+
         switch ($c) {
-            "1" { Menu-Network }
-            "2" { Menu-PrinterSharing }
-            "3" { Menu-SystemInfo }
-            "4" { Menu-Maintenance }
-            "5" { Menu-Software }
-            "6" { Menu-BitLocker }
-            "7" {
-                $confirm = Read-Esc "Ban co chac muon thoat? [Y/N]: "
-                if ($confirm.ToUpper() -eq "Y") {
-                    Write-Log "Nguoi dung thoat toolkit"
-                    Write-Host ""
-                    Write-Host "Cam on da su dung." -ForegroundColor Cyan
-                    Write-Host ""
-                    foreach ($mod in @('Maintenance','Software','BitLocker')) {
-                        Get-ChildItem "$env:TEMP\${mod}_*.ps1" -EA SilentlyContinue | Remove-Item -Force
-                    }
-                    return
-                }
+            "1" { try { Menu-Network } catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            "2" { try { Menu-PrinterSharing } catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            "3" { try { Menu-SystemInfo } catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            "4" { try { _Menu-Maintenance } catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            "5" { try { _Menu-Software }    catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            "6" { try { _Menu-BitLocker }   catch { Write-Host "Loi: $_" -ForegroundColor Red; Pause-Return } }
+            default { 
+                Write-Host "Lua chon khong hop le. Vui long chon tu 1 den 7." -ForegroundColor Yellow
+                Start-Sleep -Seconds 1
             }
         }
     } while ($true)
 }
+
+try {
+    Show-MainMenu
+} finally {
+    Write-Host "Dang don dep file tam..." -ForegroundColor Gray
+    $SID = $env:TOOLKIT_SESSION_ID
+    $patterns = @(
+        "$env:TEMP\ToolkitCore_$SID.ps1",
+        "$env:TEMP\Maintenance_$SID.ps1",
+        "$env:TEMP\Software_$SID.ps1",
+        "$env:TEMP\BitLocker_$SID.ps1",
+        "$env:TEMP\PrinterFixTool_*.exe",
+        "$env:TEMP\UC20_*.exe",
+        "$env:TEMP\CanchinhOffice_*.exe",
+        "$env:TEMP\HardwareTest_*.exe",
+        "$env:TEMP\1398_*.exe",
+        "$env:TEMP\LKC1.0_*.exe",
+        "$env:TEMP\smartctl_toolkit.exe"
+    )
+    $deleted = [System.Collections.Generic.List[string]]::new()
+    foreach ($pat in $patterns) {
+        Get-Item $pat -EA SilentlyContinue | ForEach-Object {
+            [void]$deleted.Add($_.Name)
+            Remove-Item $_.FullName -Force -EA SilentlyContinue
+        }
+    }
+    if ($deleted.Count -gt 0) {
+        Write-Host "Da xoa $($deleted.Count) file tam." -ForegroundColor Green
+    }
+    Start-Sleep 1
+}
+
+try {
+    Show-MainMenu
+} finally {
+    # Cleanup
+}
+
 
 # ============================================================
 # EXECUTION & CLEANUP WRAPPER
