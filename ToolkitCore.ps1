@@ -1626,7 +1626,7 @@ function Invoke-LoadModule {
         Write-Host "  Module $Name san sang." -ForegroundColor Green
         return $true
     } catch {
-        Write-Host "  Loi tai module $Name: $_" -ForegroundColor Red; return $false
+        Write-Host " Loi tai module ${Name}: $_" -ForegroundColor Red; return $false
     }
 }
 
