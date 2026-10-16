@@ -955,7 +955,7 @@ function Test-FileSharingLanAdvanced {
     if ($stoppedServices.Count -gt 0) {
         Write-Host "`nCo $($stoppedServices.Count) dich vu ho tro chia se dang bi tat." -ForegroundColor Yellow
         $c3 = Read-Esc "Ban co muon tu dong BAT va dat che tu dong (Automatic) cho cac dich vu nay khong? [Y/N]: "
-        if ($c3.ToUpper() -ne "Y") {
+        if ($c3.ToUpper() -eq "Y") {
             Write-Host "  -> Bo qua khoi dong dich vu." -ForegroundColor Gray
         } else {
             foreach ($srv in$stoppedServices) {
