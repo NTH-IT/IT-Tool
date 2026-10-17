@@ -39,6 +39,7 @@ function Show-BitLockerStatusTable {
 
 function Get-BitLockerDriveList {
     param($Volumes)
+    # Đã sửa lỗi \vert{} thành |
     return @($Volumes \vert{} Where-Object {$_.ProtectionStatus -eq 'On' -or
         ($_.EncryptionMethod -and$_.EncryptionMethod -ne 'None')
     })
@@ -133,6 +134,7 @@ function Export-RecoveryKeysToFile {
         "BitLocker_RecoveryKeys_$(Get-Date -Format yyyyMMdd_HHmmss).txt")
     $lines = @()$lines += "BitLocker Recovery Keys"
     $lines += "Xuat luc: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    # Đã sửa lỗi \vert{} thành |
     $lines += "May: $env:COMPUTERNAME  \vert{}  User:$env:USERNAME"
     $lines += ("=" * 60)
     $lines += ""
