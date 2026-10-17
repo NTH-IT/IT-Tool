@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableDelayedExpansion
 set "SESSION_ID=%RANDOM%%RANDOM%"
 set "WINTITLE=Toolkit Windows [%SESSION_ID%] - Phat trien boi Mr.Hai"
