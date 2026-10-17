@@ -25,42 +25,46 @@ function Show-BitLockerStatusTable {
     Write-Host ""
     Write-Host ("  {0,-6} {1,-16} {2,-12} {3,-16} {4,-8} {5,4}" -f "Drive", "Label", "Status", "Method", "Locked", "%") -ForegroundColor Cyan
     Write-Host ("  " + ("-" * 70))
-    foreach ($v in $Volumes) {$mp = "$($v.MountPoint)"
-        $label = if ($v.VolumeLabel) {$v.VolumeLabel } else { "(none)" }
+    foreach ($v in $Volumes) {
+        $mp = "$($v.MountPoint)"
+        $label = if ($v.VolumeLabel) { $v.VolumeLabel } else { "(none)" }
         $status = "$($v.ProtectionStatus)"
-        $method = if ($v.EncryptionMethod -and$v.EncryptionMethod -ne 'None') { "$($v.EncryptionMethod)" } else { "None" }
+        $method = if ($v.EncryptionMethod -and $v.EncryptionMethod -ne 'None') { "$($v.EncryptionMethod)" } else { "None" }
         $locked = "$($v.LockStatus)"
         $pct    = "$($v.EncryptionPercentage)"
         $color = if ($status -eq 'On') { 'Green' } elseif ($status -eq 'Off') { 'Gray' } else { 'Yellow' }
-        Write-Host ("  {0,-6} {1,-16} {2,-12} {3,-16} {4,-8} {5,4}" -f $mp, $label,$status, $method,$locked, $pct) -ForegroundColor$color
+        Write-Host ("  {0,-6} {1,-16} {2,-12} {3,-16} {4,-8} {5,4}" -f $mp, $label, $status, $method, $locked, $pct) -ForegroundColor $color
     }
     Write-Host ""
 }
 
 function Get-BitLockerDriveList {
     param($Volumes)
-    # Đã sửa lỗi \vert{} thành |
-    return @($Volumes \vert{} Where-Object {$_.ProtectionStatus -eq 'On' -or
-        ($_.EncryptionMethod -and$_.EncryptionMethod -ne 'None')
+    return @($Volumes | Where-Object {
+        $_.ProtectionStatus -eq 'On' -or
+        ($_.EncryptionMethod -and $_.EncryptionMethod -ne 'None')
     })
 }
 
 function Select-BitLockerVolume {
     param($Volumes)
-    if (-not $Volumes -or$Volumes.Count -eq 0) {
+    if (-not $Volumes -or $Volumes.Count -eq 0) {
         Write-Host "Khong co volume nao." -ForegroundColor Yellow
         return $null
     }
     Write-Host ""
     Write-Host "  Danh sach volume:" -ForegroundColor Cyan
     $i = 1
-    foreach ($v in$Volumes) {
-        Write-Host ("  [{0}] {1} - {2} ({3})" -f $i, $v.MountPoint, $v.VolumeLabel, $v.ProtectionStatus)$i++
+    foreach ($v in $Volumes) {
+        Write-Host ("  [{0}] {1} - {2} ({3})" -f $i, $v.MountPoint, $v.VolumeLabel, $v.ProtectionStatus)
+        $i++
     }
     Write-Host ""
-    while ($true) {$c = Read-Esc "Chon volume (so thu tu, ESC de huy): "
-        if ($c -eq$Global:ESC) { return $null }$n = 0
-        if ([int]::TryParse(($c -replace '[^\d]',''), [ref]$n) -and$n -ge 1 -and $n -le$Volumes.Count) {
+    while ($true) {
+        $c = Read-Esc "Chon volume (so thu tu, ESC de huy): "
+        if ($c -eq $Global:ESC) { return $null }
+        $n = 0
+        if ([int]::TryParse(($c -replace '[^\d]',''), [ref]$n) -and $n -ge 1 -and $n -le $Volumes.Count) {
             return $Volumes[$n - 1]
         }
         Write-Host "Lua chon khong hop le." -ForegroundColor Red
@@ -68,9 +72,11 @@ function Select-BitLockerVolume {
 }
 
 function Get-RecoveryKeysOfVolume {
-    param($Volume)$keys = @()
-    foreach ($kp in$Volume.KeyProtector) {
-        if ($kp.KeyProtectorType -eq 'RecoveryPassword' -and $kp.RecoveryPassword) {$keys += @{
+    param($Volume)
+    $keys = @()
+    foreach ($kp in $Volume.KeyProtector) {
+        if ($kp.KeyProtectorType -eq 'RecoveryPassword' -and $kp.RecoveryPassword) {
+            $keys += @{
                 Id    = $kp.KeyProtectorId
                 Value = $kp.RecoveryPassword
             }
@@ -81,7 +87,7 @@ function Get-RecoveryKeysOfVolume {
 
 function Show-RecoveryKeyWithConfirm {
     param($Volume, [switch]$ReturnInsteadOfPrint)
-    $keys = Get-RecoveryKeysOfVolume$Volume
+    $keys = Get-RecoveryKeysOfVolume $Volume
     if ($keys.Count -eq 0) {
         Write-Host "Volume nay khong co Recovery Key (co the chi dung TPM)." -ForegroundColor Yellow
         return $null
@@ -95,11 +101,11 @@ function Show-RecoveryKeyWithConfirm {
     $c = Read-Esc "Ban co chac muon hien thi Recovery Key? [Y/N]: "
     if ($c.ToUpper() -ne "Y") { Write-Host "Da huy."; return $null }
 
-    if ($ReturnInsteadOfPrint) { return$keys }
+    if ($ReturnInsteadOfPrint) { return $keys }
 
     Write-Host ""
     Write-Host "=== RECOVERY KEY CUA $($Volume.MountPoint) ===" -ForegroundColor Cyan
-    foreach ($k in$keys) {
+    foreach ($k in $keys) {
         Write-Host ("  ID    : {0}" -f $k.Id)
         Write-Host ("  Key   : {0}" -f $k.Value) -ForegroundColor Green
         Write-Host ""
@@ -108,10 +114,12 @@ function Show-RecoveryKeyWithConfirm {
 }
 
 function Export-RecoveryKeysToFile {
-    param($Volumes)$allKeys = @()
-    foreach ($v in$Volumes) {
-        $keys = Get-RecoveryKeysOfVolume$v
-        foreach ($k in $keys) {$allKeys += [PSCustomObject]@{
+    param($Volumes)
+    $allKeys = @()
+    foreach ($v in $Volumes) {
+        $keys = Get-RecoveryKeysOfVolume $v
+        foreach ($k in $keys) {
+            $allKeys += [PSCustomObject]@{
                 Drive    = "$($v.MountPoint)"
                 Label    = "$($v.VolumeLabel)"
                 KeyId    = "$($k.Id)"
@@ -132,20 +140,21 @@ function Export-RecoveryKeysToFile {
 
     $dest = [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'),
         "BitLocker_RecoveryKeys_$(Get-Date -Format yyyyMMdd_HHmmss).txt")
-    $lines = @()$lines += "BitLocker Recovery Keys"
+    $lines = @()
+    $lines += "BitLocker Recovery Keys"
     $lines += "Xuat luc: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-    # Đã sửa lỗi \vert{} thành |
-    $lines += "May: $env:COMPUTERNAME  \vert{}  User:$env:USERNAME"
+    $lines += "May: $env:COMPUTERNAME  |  User: $env:USERNAME"
     $lines += ("=" * 60)
     $lines += ""
-    foreach ($k in $allKeys) {$lines += "Drive : $($k.Drive)"
+    foreach ($k in $allKeys) {
+        $lines += "Drive : $($k.Drive)"
         $lines += "Label : $($k.Label)"
         $lines += "Key ID: $($k.KeyId)"
         $lines += "Key   : $($k.KeyValue)"
         $lines += ("-" * 60)
     }
     try {
-        [System.IO.File]::WriteAllLines($dest,$lines)
+        [System.IO.File]::WriteAllLines($dest, $lines)
         Write-Host "Da xuat: $dest" -ForegroundColor Green
         Write-Log "Xuat BitLocker Recovery Key ra $dest"
         Start-Process notepad.exe $dest
@@ -155,7 +164,8 @@ function Export-RecoveryKeysToFile {
 }
 
 function Disable-BitLockerVolumeWithProgress {
-    param($Volume)$mp = "$($Volume.MountPoint)"
+    param($Volume)
+    $mp = "$($Volume.MountPoint)"
     Write-Host ""
     Write-Host "CANH BAO:" -ForegroundColor Red
     Write-Host "  Se GIAI MA hoan toan o $mp. Qua trinh co the mat 30 phut -> vai gio." -ForegroundColor Yellow
@@ -171,17 +181,19 @@ function Disable-BitLockerVolumeWithProgress {
         Disable-BitLocker -MountPoint $mp -EA Stop | Out-Null
         Write-Log "Disable BitLocker $mp - bat dau"
 
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()$maxWait = 7200
-        while ($sw.Elapsed.TotalSeconds -lt$maxWait) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $maxWait = 7200
+        while ($sw.Elapsed.TotalSeconds -lt $maxWait) {
             Start-Sleep -Seconds 5
             try {
-                $v = Get-BitLockerVolume -MountPoint$mp -EA Stop
+                $v = Get-BitLockerVolume -MountPoint $mp -EA Stop
                 $pct = [int]$v.EncryptionPercentage
                 $status = "$($v.ProtectionStatus)"
-                $pctLeft = 100 -$pct
+                $pctLeft = 100 - $pct
                 $fill = [int]($pctLeft / 2)
-                if ($fill -gt 50) {$fill = 50 }
-                if ($fill -lt 0)  { $fill = 0 }$bar = ("#" * $fill) + ("-" * (50 - $fill))
+                if ($fill -gt 50) { $fill = 50 }
+                if ($fill -lt 0)  { $fill = 0 }
+                $bar = ("#" * $fill) + ("-" * (50 - $fill))
                 Write-Host -NoNewline ("`r  [Giai ma] {0,3}%  (con lai {1,3}%)  [{2}]  Trang thai: {3}   " -f $pctLeft, $pct, $bar, $status)
                 if ($pct -eq 0 -or $status -eq 'Off') {
                     Write-Host ""
@@ -308,7 +320,7 @@ function Show-BitLockerMenu {
 
 function Show-BitLockerVolumeDetail {
     param($Volumes)
-    $v = Select-BitLockerVolume$Volumes
+    $v = Select-BitLockerVolume $Volumes
     if (-not $v) { return }
 
     Clear-Host; Write-Nav
@@ -322,7 +334,7 @@ function Show-BitLockerVolumeDetail {
     Write-Host ("  Lock Status       : {0}" -f $v.LockStatus)
     Write-Host ("  Auto Unlock       : {0}" -f $v.AutoUnlockEnabled)
     Write-Host ("  Key Protectors    : {0}" -f $v.KeyProtector.Count)
-    foreach ($kp in$v.KeyProtector) {
+    foreach ($kp in $v.KeyProtector) {
         Write-Host ("    - {0,-20} (ID: {1})" -f $kp.KeyProtectorType, $kp.KeyProtectorId)
     }
     Write-Host ""
@@ -337,7 +349,7 @@ function Show-BitLockerVolumeDetail {
         Write-Host "  [7] Them Recovery Key moi"
         Write-Host "  [0] Quay lai"
         $c = Read-Esc "Chon: "
-        if ($c -eq $Global:ESC -or$c -eq "0") { return }
+        if ($c -eq $Global:ESC -or $c -eq "0") { return }
 
         switch ($c) {
             "1" { Show-RecoveryKeyWithConfirm -Volume $v | Out-Null; Pause-Return }
@@ -352,7 +364,8 @@ function Show-BitLockerVolumeDetail {
 }
 
 function Change-BitLockerPinOrPassword {
-    param($Volume)$mp = "$($Volume.MountPoint)"
+    param($Volume)
+    $mp = "$($Volume.MountPoint)"
     Write-Host ""
     Write-Host "  [1] Doi PIN (TPM + PIN)"
     Write-Host "  [2] Doi Password (TPM + Password)"
@@ -362,10 +375,10 @@ function Change-BitLockerPinOrPassword {
         Write-Host ""
         Write-Host "Nhap PIN moi (4-20 chu so)." -ForegroundColor Yellow
         $pin1 = Read-Esc "PIN moi: "
-        if ($pin1 -eq $Global:ESC -or$pin1 -eq "") { Write-Host "Da huy."; Pause-Return; return }
+        if ($pin1 -eq $Global:ESC -or $pin1 -eq "") { Write-Host "Da huy."; Pause-Return; return }
         if ($pin1 -notmatch '^\d{4,20}$') { Write-Host "PIN phai la 4-20 chu so." -ForegroundColor Red; Pause-Return; return }
         $pin2 = Read-Esc "Nhap lai PIN: "
-        if ($pin1 -ne$pin2) { Write-Host "PIN khong khop." -ForegroundColor Red; Pause-Return; return }
+        if ($pin1 -ne $pin2) { Write-Host "PIN khong khop." -ForegroundColor Red; Pause-Return; return }
 
         try {
             $bde = Get-WmiObject -Namespace "root\CIMV2\Security\MicrosoftVolumeEncryption" `
@@ -393,7 +406,7 @@ function Change-BitLockerPinOrPassword {
         try {
             $bde = Get-WmiObject -Namespace "root\CIMV2\Security\MicrosoftVolumeEncryption" `
                 -Class Win32_EncryptableVolume -Filter "DriveLetter='$mp'"
-            $res =$bde.ChangePassphrase(0, $pw1,$pw2)
+            $res = $bde.ChangePassphrase(0, $pw1, $pw2)
             if ($res.ReturnValue -eq 0) {
                 Write-Host "Doi Password thanh cong." -ForegroundColor Green
                 Write-Log "Doi Password BitLocker $mp"
@@ -408,14 +421,15 @@ function Change-BitLockerPinOrPassword {
 }
 
 function Add-BitLockerRecoveryKeyInteractive {
-    param($Volume)$mp = "$($Volume.MountPoint)"
+    param($Volume)
+    $mp = "$($Volume.MountPoint)"
     Write-Host ""
     Write-Host "Se tao Recovery Key MOI (48 chu so) cho volume $mp." -ForegroundColor Yellow
     Write-Host "Key cu KHONG bi xoa, ban co the xoa sau bang muc [6]." -ForegroundColor Gray
     $c = Read-Esc "Tiep tuc? [Y/N]: "
     if ($c.ToUpper() -ne "Y") { return }
     try {
-        $newKp = Add-BitLockerKeyProtector -MountPoint$mp -RecoveryPasswordProtector -EA Stop
+        $newKp = Add-BitLockerKeyProtector -MountPoint $mp -RecoveryPasswordProtector -EA Stop
         Write-Host "Da them Recovery Key moi." -ForegroundColor Green
         Write-Host "Key ID: $($newKp.KeyProtectorId)" -ForegroundColor Cyan
         Write-Host "Key   : $($newKp.RecoveryPassword)" -ForegroundColor Green
@@ -429,7 +443,8 @@ function Add-BitLockerRecoveryKeyInteractive {
 }
 
 function Remove-BitLockerKeyProtectorInteractive {
-    param($Volume)$mp = "$($Volume.MountPoint)"
+    param($Volume)
+    $mp = "$($Volume.MountPoint)"
     $kps = @($Volume.KeyProtector)
     if ($kps.Count -eq 0) { Write-Host "Khong co Key Protector." -ForegroundColor Yellow; Pause-Return; return }
     if ($kps.Count -eq 1) {
@@ -441,22 +456,25 @@ function Remove-BitLockerKeyProtectorInteractive {
     Write-Host ""
     Write-Host "  Danh sach Key Protectors:" -ForegroundColor Cyan
     $i = 1
-    foreach ($kp in$kps) {
-        Write-Host ("  [{0}] {1}  -  ID: {2}" -f $i,$kp.KeyProtectorType, $kp.KeyProtectorId)$i++
+    foreach ($kp in $kps) {
+        Write-Host ("  [{0}] {1}  -  ID: {2}" -f $i, $kp.KeyProtectorType, $kp.KeyProtectorId)
+        $i++
     }
     Write-Host ""
     $c = Read-Esc "Chon so thu tu de xoa (ESC huy): "
-    if ($c -eq $Global:ESC) { return }$n = 0
-    if ([int]::TryParse(($c -replace '[^\d]',''), [ref]$n) -and $n -ge 1 -and$n -le $kps.Count) {$target = $kps[$n - 1]
+    if ($c -eq $Global:ESC) { return }
+    $n = 0
+    if ([int]::TryParse(($c -replace '[^\d]',''), [ref]$n) -and $n -ge 1 -and $n -le $kps.Count) {
+        $target = $kps[$n - 1]
         Write-Host ""
         Write-Host "Se xoa Key Protector: $($target.KeyProtectorType)" -ForegroundColor Yellow
         Write-Host "ID: $($target.KeyProtectorId)" -ForegroundColor Yellow
         $c2 = Read-Esc "Xac nhan xoa? [Y/N]: "
         if ($c2.ToUpper() -ne "Y") { Write-Host "Da huy."; return }
         try {
-            Remove-BitLockerKeyProtector -MountPoint $mp -KeyProtectorId$target.KeyProtectorId -EA Stop
+            Remove-BitLockerKeyProtector -MountPoint $mp -KeyProtectorId $target.KeyProtectorId -EA Stop
             Write-Host "Da xoa Key Protector." -ForegroundColor Green
-            Write-Log "Xoa Key Protector $($target.KeyProtectorId) tren$mp"
+            Write-Log "Xoa Key Protector $($target.KeyProtectorId) tren $mp"
         } catch {
             Write-Host "Loi xoa: $_" -ForegroundColor Red
         }
@@ -477,28 +495,28 @@ function Show-BitLockerKeyProtectorMenu {
         Write-Host "  [5] Doi Password (TPM+Password)"
         Write-Host "  [0] Quay lai"
         $c = Read-Esc "Chon: "
-        if ($c -eq $Global:ESC -or$c -eq "0") { return }
+        if ($c -eq $Global:ESC -or $c -eq "0") { return }
 
         switch ($c) {
             "1" {
-                $v = Select-BitLockerVolume$Volumes
+                $v = Select-BitLockerVolume $Volumes
                 if ($v) {
                     Clear-Host
                     Write-Host "=== KEY PROTECTORS CUA $($v.MountPoint) ===" -ForegroundColor Cyan
-                    foreach ($kp in$v.KeyProtector) {
+                    foreach ($kp in $v.KeyProtector) {
                         Write-Host ("  - {0,-20} (ID: {1})" -f $kp.KeyProtectorType, $kp.KeyProtectorId)
                     }
                     Pause-Return
                 }
             }
-            "2" { $v = Select-BitLockerVolume$Volumes; if ($v) { Add-BitLockerRecoveryKeyInteractive -Volume$v } }
-            "3" { $v = Select-BitLockerVolume$Volumes; if ($v) { Remove-BitLockerKeyProtectorInteractive -Volume$v } }
-            "4" { $v = Select-BitLockerVolume$Volumes; if ($v) { Change-BitLockerPinOrPassword -Volume$v } }
-            "5" { $v = Select-BitLockerVolume$Volumes; if ($v) { Change-BitLockerPinOrPassword -Volume$v } }
+            "2" { $v = Select-BitLockerVolume $Volumes; if ($v) { Add-BitLockerRecoveryKeyInteractive -Volume $v } }
+            "3" { $v = Select-BitLockerVolume $Volumes; if ($v) { Remove-BitLockerKeyProtectorInteractive -Volume $v } }
+            "4" { $v = Select-BitLockerVolume $Volumes; if ($v) { Change-BitLockerPinOrPassword -Volume $v } }
+            "5" { $v = Select-BitLockerVolume $Volumes; if ($v) { Change-BitLockerPinOrPassword -Volume $v } }
         }
     } while ($true)
 }
 
-function _Menu-BitLocker {
+function Global:_Menu-BitLocker {
     Show-BitLockerMenu
 }
