@@ -883,10 +883,8 @@ function Test-FileSharingLanAdvanced {
     $fwEnabled = @($fwProfile | Where-Object { $_.Enabled -eq 'True' }).Count
     Write-Host "  - Trang thai Firewall Profiles dang bat: $fwEnabled / 3 profiles" -ForegroundColor Gray
 
-    $ndRules = @(Get-NetFirewallRule -DisplayGroup "Network Discovery" -EA SilentlyContinue |
-                 Where-Object { $_.Enabled -eq 'True' })
-    $fsRules = @(Get-NetFirewallRule -DisplayGroup "File and Printer Sharing" -EA SilentlyContinue |
-                 Where-Object { $_.Enabled -eq 'True' })
+    $ndRules = @(Get-NetFirewallRule -DisplayGroup "Network Discovery" -EA SilentlyContinue | Where-Object { $_.Enabled -eq 'True' })
+    $fsRules = @(Get-NetFirewallRule -DisplayGroup "File and Printer Sharing" -EA SilentlyContinue | Where-Object { $_.Enabled -eq 'True' })
 
     $ndStatus = if ($ndRules.Count -gt 0) { "Dang Bat ([OK])" } else { "Dang Tat ([X])" }
     $fsStatus = if ($fsRules.Count -gt 0) { "Dang Bat ([OK])" } else { "Dang Tat ([X])" }
@@ -980,6 +978,7 @@ function Test-FileSharingLanAdvanced {
     Write-Log "Chan doan & Thiet lap nang cao file sharing LAN"
     Pause-Return
 }
+
 
 function Invoke-LanSharingMenu {
     do {
